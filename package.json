@@ -1,0 +1,30 @@
+{
+  "name": "pi-opencode-shim",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun run src/server.ts",
+    "start": "bun run src/server.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint .",
+    "format": "oxfmt --write .",
+    "format:check": "oxfmt --check .",
+    "check": "bun run format:check && bun run lint && bun run typecheck",
+    "prepare": "lefthook install"
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "latest"
+  },
+  "devDependencies": {
+    "@oxlint/plugins": "latest",
+    "@types/bun": "latest",
+    "lefthook": "latest",
+    "oxfmt": "latest",
+    "oxlint": "latest",
+    "typescript": "latest",
+    "ultracite": "latest"
+  },
+  "packageManager": "bun@1.2.17"
+}
