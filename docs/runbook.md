@@ -86,6 +86,17 @@ bun run contract:reference-verify -- artifacts/runs/<corpus>.reference.json
 
 Verification checks the recorded T3/OpenCode commits, capture and scenario-report SHA-256 digests, capture correlation, and complete passed scenario set.
 
+Run the shim acceptance gate against a running `pi-opencode-server` (the same headless scenarios, without OpenCode):
+
+```sh
+SHIM_ACCEPTANCE_TARGET=http://127.0.0.1:4096 \
+SHIM_ACCEPTANCE_OUTPUT=artifacts/runs/shim-acceptance.json \
+SCENARIO_BARRIER_URL=http://127.0.0.1:<barrier-port> \
+bun run contract:acceptance
+```
+
+The gate rejects partial or failed scenarios. If `contracts/matrix.json` is frozen, it first verifies the referenced reference manifest and corpus identity.
+
 ## Maintain evidence
 
 1. Update `contracts/manifest.json` for a new upstream identity; never overwrite a corpus with a different identity.

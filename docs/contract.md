@@ -79,7 +79,7 @@ T3's trace and raw/canonical provider logs SHOULD be retained with each run.
 
 ## 7. Required scenario suite
 
-Each scenario MUST start from declared state and record its expected terminal condition.
+Each scenario MUST start from declared state and record its expected terminal condition. Scenario reports MUST enumerate every `C01`–`C19` entry. Each entry declares `applicability` as `required` or `not-applicable`; the latter MUST include a non-empty `skipReason`. Required entries MUST include declared-state and canonical-state evidence, and every reported operation MUST correspond to an ordered exchange in the correlated raw capture.
 
 | ID | Scenario | Required observation |
 | --- | --- | --- |

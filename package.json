@@ -18,6 +18,7 @@
     "contract:capture": "bun run tools/contract/capture.ts",
     "contract:reference": "bun run tools/contract/reference.ts",
     "contract:reference-verify": "bun run tools/contract/reference-verify.ts",
+    "contract:acceptance": "bun run tools/contract/acceptance.ts",
     "contract:record": "bun run tools/contract/record.ts",
     "contract:scenarios": "bun run tools/contract/scenarios.ts",
     "prepare": "lefthook install"
