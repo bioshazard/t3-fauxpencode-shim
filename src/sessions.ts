@@ -281,6 +281,7 @@ function emitStatus(
   emit({
     id: crypto.randomUUID(),
     properties: {
+      sessionID: id,
       sessionStatus: status,
       status: { type: status === "running" ? "busy" : "idle" },
     },
