@@ -95,7 +95,7 @@ SCENARIO_BARRIER_URL=http://127.0.0.1:<barrier-port> \
 bun run contract:acceptance
 ```
 
-The gate rejects partial or failed scenarios. If `contracts/matrix.json` is frozen, it first verifies the referenced reference manifest and corpus identity.
+The gate requires a frozen matrix, rejects partial or failed scenarios, and verifies the referenced reference manifest and corpus identity before running.
 
 ## Maintain evidence
 

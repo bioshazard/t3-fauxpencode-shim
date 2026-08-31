@@ -1,16 +1,40 @@
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 
-import { validateMatrix } from "./matrix.ts";
+import { loadMatrix, validateMatrix } from "./matrix.ts";
+import { REQUIRED_REFERENCE_SCENARIOS } from "./reference-artifacts.ts";
 import { runScenarios, type ScenarioReport } from "./scenarios.ts";
 
-export function assertAcceptanceReport(report: ScenarioReport): void {
+export function assertAcceptanceReport(
+  report: ScenarioReport,
+  expectedScenarios: readonly string[] = REQUIRED_REFERENCE_SCENARIOS
+): void {
   if (report.status !== "completed")
     throw new Error(
       "Shim acceptance is partial; all applicable scenarios must pass."
     );
-  if (report.scenarios.length === 0)
-    throw new Error("Shim acceptance produced no scenarios.");
+  const expected = new Set(expectedScenarios);
+  const actual = new Set(report.scenarios.map((scenario) => scenario.id));
+  if (actual.size !== report.scenarios.length)
+    throw new Error("Shim acceptance repeats a scenario.");
+  for (const id of expected) {
+    if (!actual.has(id))
+      throw new Error(`Shim acceptance is missing scenario ${id}.`);
+  }
+  for (const id of actual) {
+    if (!expected.has(id))
+      throw new Error(`Shim acceptance contains unexpected scenario ${id}.`);
+  }
+  for (const scenario of report.scenarios) {
+    if (!Object.hasOwn(scenario, "declaredState"))
+      throw new Error(
+        `Shim acceptance is missing declared state for ${scenario.id}.`
+      );
+    if (!Object.hasOwn(scenario, "canonicalState"))
+      throw new Error(
+        `Shim acceptance is missing canonical state for ${scenario.id}.`
+      );
+  }
   const failed = report.scenarios.filter((scenario) => !scenario.passed);
   if (failed.length > 0)
     throw new Error(
@@ -28,6 +52,12 @@ export async function runAcceptance(
   runId: string | undefined,
   barrierUrl: string | undefined
 ): Promise<ScenarioReport> {
+  const matrix = await loadMatrix();
+  if (matrix.status !== "frozen")
+    throw new Error("Shim acceptance requires a frozen reference matrix.");
+  if (corpusId === null) throw new Error("Shim acceptance requires CORPUS_ID.");
+  if (matrix.corpusId !== corpusId)
+    throw new Error("Shim acceptance corpus does not match the frozen matrix.");
   await validateMatrix();
   const barrier =
     barrierUrl === undefined

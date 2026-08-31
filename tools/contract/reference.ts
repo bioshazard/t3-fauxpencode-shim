@@ -4,16 +4,17 @@ import { dirname, resolve } from "node:path";
 import { loadCapture } from "./capture.ts";
 import { createCaptureHandler, makeCaptureConfig } from "./recorder.ts";
 import {
-  REQUIRED_REFERENCE_SCENARIOS,
   decodeReferenceManifest,
   isRecordValue,
   isStringValue,
   sha256File,
   type ReferenceProvenance,
   type ReferenceManifest,
+  type ScenarioReport,
   validateReferenceCorrelations,
   validateCompletedScenarioReport,
 } from "./reference-artifacts.ts";
+import { validateScenarioOperations } from "./reference-verify.ts";
 
 interface ReferenceConfig {
   readonly capturePath: string;
@@ -208,7 +209,7 @@ async function validateScenarioOutput(
   corpusId: string,
   runId: string,
   startedAtMs: number
-): Promise<void> {
+): Promise<ScenarioReport> {
   let parsed: unknown;
   try {
     parsed = JSON.parse(await Bun.file(path).text()) as unknown;
@@ -217,7 +218,7 @@ async function validateScenarioOutput(
   }
   if (Bun.file(path).lastModified < startedAtMs)
     throw new Error(`Scenario report ${path} predates this reference run.`);
-  validateCompletedScenarioReport(parsed, { corpusId, runId });
+  return validateCompletedScenarioReport(parsed, { corpusId, runId });
 }
 
 async function configFromEnv(): Promise<ReferenceConfig> {
@@ -228,8 +229,9 @@ async function configFromEnv(): Promise<ReferenceConfig> {
     throw new Error(
       "REFERENCE_T3_KIND must be stock-t3-opencode-adapter for the reference gate."
     );
-  const outputPath =
-    Bun.env.REFERENCE_OUTPUT ?? `artifacts/runs/${corpusId}.reference.json`;
+  const outputPath = resolve(
+    Bun.env.REFERENCE_OUTPUT ?? `artifacts/runs/${corpusId}.reference.json`
+  );
   const opencodeArgv = readArgv("REFERENCE_OPENCODE_ARGV");
   if (!opencodeArgv.some((part) => part.includes("%OPENCODE_BIN%")))
     throw new Error(
@@ -240,7 +242,9 @@ async function configFromEnv(): Promise<ReferenceConfig> {
       "REFERENCE_OPENCODE_ARGV must include %PORT% so the supervisor can isolate the server."
     );
   return {
-    capturePath: Bun.env.CAPTURE_OUTPUT ?? `artifacts/raw/${corpusId}.jsonl`,
+    capturePath: resolve(
+      Bun.env.CAPTURE_OUTPUT ?? `artifacts/raw/${corpusId}.jsonl`
+    ),
     corpusId,
     healthTimeoutMs: Number(Bun.env.REFERENCE_HEALTH_TIMEOUT_MS ?? 30_000),
     openCodeRoot: requiredEnv("OPENCODE_REFERENCE_ROOT"),
@@ -334,9 +338,10 @@ async function runReference(
     hostname: "127.0.0.1",
     port: 0,
   });
-  const scenarioOutput =
+  const scenarioOutput = resolve(
     Bun.env.REFERENCE_SCENARIO_OUTPUT ??
-    `artifacts/runs/${config.corpusId}.json`;
+      `artifacts/runs/${config.corpusId}.json`
+  );
   const t3Env: Record<string, string> = {
     ...process.env,
     CAPTURE_TARGET: recorder.url.toString(),
@@ -399,18 +404,20 @@ async function runReference(
     await store.flush();
     const records = await loadCapture(config.capturePath);
     const capturedScenarios = validateReferenceCorrelations(records, runId);
-    for (const scenario of REQUIRED_REFERENCE_SCENARIOS) {
-      if (!capturedScenarios.has(scenario))
-        throw new Error(
-          `Capture is missing scenario correlation for ${scenario}.`
-        );
-    }
-    await validateScenarioOutput(
+    const scenarioReport = await validateScenarioOutput(
       scenarioOutput,
       config.corpusId,
       runId,
       startedAtMs
     );
+    for (const scenario of scenarioReport.scenarios) {
+      if (scenario.applicability === "not-applicable") continue;
+      if (!capturedScenarios.has(scenario.id))
+        throw new Error(
+          `Capture is missing scenario correlation for ${scenario.id}.`
+        );
+    }
+    validateScenarioOperations(scenarioReport, records);
     provenance = await captureProvenance();
     captureSha256 = await sha256File(config.capturePath);
     scenarioSha256 = await sha256File(scenarioOutput);

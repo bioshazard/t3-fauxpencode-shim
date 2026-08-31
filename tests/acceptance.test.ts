@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { assertAcceptanceReport } from "../tools/contract/acceptance.ts";
+import { REQUIRED_REFERENCE_SCENARIOS } from "../tools/contract/reference-artifacts.ts";
 
 function report(status: "completed" | "partial" = "completed", passed = true) {
   return {
@@ -8,19 +9,17 @@ function report(status: "completed" | "partial" = "completed", passed = true) {
     corpusId: null,
     generatedAt: "2026-08-31T12:00:00.000Z",
     runId: "run",
-    scenarios: [
-      {
-        applicability: "required" as const,
-        canonicalState: {},
-        declaredState: {},
-        expectedTerminal: "done",
-        failures: passed ? [] : ["failed"],
-        id: "C01",
-        observedEventTypes: [],
-        operations: [{ body: null, method: "GET", path: "/", status: 200 }],
-        passed,
-      },
-    ],
+    scenarios: REQUIRED_REFERENCE_SCENARIOS.map((id) => ({
+      applicability: "required" as const,
+      canonicalState: { id },
+      declaredState: { id },
+      expectedTerminal: "done",
+      failures: passed && id === "C01" ? [] : passed ? [] : ["failed"],
+      id,
+      observedEventTypes: [],
+      operations: [{ body: null, method: "GET", path: "/", status: 200 }],
+      passed: passed || id !== "C01",
+    })),
     status,
   };
 }

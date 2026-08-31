@@ -134,7 +134,7 @@ function operationMatches(
   return record.response?.status === operation.status;
 }
 
-function validateScenarioOperations(
+export function validateScenarioOperations(
   report: ScenarioReport,
   records: readonly {
     readonly correlation?: Readonly<Record<string, string>>;
