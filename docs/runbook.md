@@ -23,7 +23,7 @@ The service listens on `127.0.0.1:4096` unless `PI_OPENCODE_HOST` or `PI_OPENCOD
 Run the recorder in front of the pinned real OpenCode server used by the reference corpus:
 
 ```sh
-CAPTURE_TARGET=http://127.0.0.1:4096 \
+CAPTURE_TARGET=http://127.0.0.1:<opencode-port> \
 CAPTURE_OUTPUT=artifacts/raw/<corpus>.jsonl \
 bun run contract:record
 ```
