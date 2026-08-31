@@ -41,7 +41,7 @@ SCENARIO_OUTPUT=artifacts/runs/<corpus>.json \
 bun run contract:scenarios
 ```
 
-The current driver exercises C01, C02, C03, C04, and C06. A `partial` report means setup or terminal SSE evidence was unavailable; it is not a passing contract.
+The current driver exercises C01-C06 (with C05 history), C11 abort, C13-C14 rollback/continue, C17 concurrency, and C18 malformed/unknown requests. A `partial` report means setup or terminal SSE evidence was unavailable; it is not a passing contract.
 
 ## Maintain evidence
 

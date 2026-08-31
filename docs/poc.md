@@ -10,13 +10,13 @@ This is a provisional, Bun-native facade. It is not the captured T3 contract yet
 | Global events | `GET /event` or `GET /global/event` | SSE stream |
 | Scoped events | `GET /session/:id/event` | Session-filtered SSE stream |
 | Create | `POST /session` | Persistent Pi-backed session |
-| Lookup/list | `GET /session`, `GET /session/:id` | Session snapshots |
-| History | `GET /session/:id/message` | Facade messages projected from Pi |
+| Lookup/list | `GET /session`, `GET /session/:id` | OpenCode session metadata projected from Pi |
+| History | `GET /session/:id/message` | `{info, parts}` entries projected from Pi |
 | Prompt | `POST /session/:id/message` or `/prompt` | Pi turn plus SSE lifecycle |
 | Async prompt | `POST /session/:id/prompt_async` | Accepted turn plus SSE lifecycle |
 | Session status | `GET /session/status` | Session ID to idle/busy status map |
-| Abort | `POST /session/:id/abort` | Aborted snapshot |
-| Revert | `POST /session/:id/revert` | Tree navigation before target message |
+| Abort | `POST /session/:id/abort` | OpenCode-compatible boolean acknowledgement |
+| Revert | `POST /session/:id/revert` | Updated session after tree navigation |
 
 The deployed entrypoint uses `PiSessionBackend`; tests use an injectable, deterministic backend to exercise tool ordering, aborts, rollback, and concurrent-session isolation without requiring a model call.
 
