@@ -20,6 +20,7 @@ export interface CaptureRecord {
     readonly closedAt?: string;
     readonly state: "closed" | "error";
   };
+  readonly correlation?: Readonly<Record<string, string>>;
   readonly durationMs: number;
   readonly request: {
     readonly headers: Readonly<Record<string, string>>;
@@ -65,6 +66,25 @@ function queryRecord(url: URL): Readonly<Record<string, string>> {
   const result: Record<string, string> = {};
   for (const [name, value] of url.searchParams) result[name] = value;
   return result;
+}
+
+function correlationHeaders(
+  headers: Headers
+): Readonly<Record<string, string>> | undefined {
+  const result: Record<string, string> = {};
+  for (const [name, value] of headers) {
+    const lower = name.toLowerCase();
+    if (
+      lower === "x-contract-run-id" ||
+      lower === "x-contract-scenario" ||
+      lower === "x-t3-thread-id" ||
+      lower === "x-t3-turn-id" ||
+      lower === "x-opencode-session-id"
+    ) {
+      result[lower] = value;
+    }
+  }
+  return Object.keys(result).length === 0 ? undefined : result;
 }
 
 function bodyText(
@@ -253,6 +273,7 @@ export function createCaptureHandler(
     const requestURL = new URL(request.url);
     const requestBytes = new Uint8Array(await request.clone().arrayBuffer());
     const requestBody = bodyText(requestBytes, config.maxBodyBytes);
+    const correlation = correlationHeaders(request.headers);
     const upstreamRequest: RequestInit = {
       body:
         request.method === "GET" || request.method === "HEAD"
@@ -280,6 +301,7 @@ export function createCaptureHandler(
       sequence,
       startedAt,
       connection: { state: "error" },
+      ...(correlation === undefined ? {} : { correlation }),
     } satisfies CaptureRecord;
 
     try {

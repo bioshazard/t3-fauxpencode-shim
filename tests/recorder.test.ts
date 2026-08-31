@@ -31,7 +31,11 @@ describe("contract recorder", () => {
     const { handler } = createCaptureHandler(config, store);
 
     try {
-      const response = await handler(new Request("http://proxy.test/event"));
+      const response = await handler(
+        new Request("http://proxy.test/event", {
+          headers: { "x-contract-scenario": "C06" },
+        })
+      );
       expect(response.status).toBe(200);
       expect(await response.text()).toContain("event: message");
       await store.flush();
@@ -40,6 +44,7 @@ describe("contract recorder", () => {
       expect(records).toHaveLength(1);
       const record = JSON.parse(records[0] ?? "{}");
       expect(record.request.path).toBe("/event");
+      expect(record.correlation).toEqual({ "x-contract-scenario": "C06" });
       expect(record.response.status).toBe(200);
       expect(record.body.response).toContain("event: message");
       expect(record.connection.state).toBe("closed");
