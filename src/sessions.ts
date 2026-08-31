@@ -1,3 +1,4 @@
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import {
   createAgentSession,
   SessionManager,
@@ -117,7 +118,7 @@ class MemoryBackendSession implements BackendSession {
     emitStatus(this.id, this.status, emit);
 
     const user: FacadeMessage = {
-      id: `${this.id}-message-${this.messages.length + 1}`,
+      id: input.messageId ?? `${this.id}-message-${this.messages.length + 1}`,
       parts: [{ text: input.text, type: "text" }],
       role: "user",
       time: { created: now() },
@@ -301,6 +302,7 @@ export class InMemorySessionBackend implements SessionBackend {
 
 class PiBackendSession implements BackendSession {
   private readonly created: number;
+  private readonly messageIdOverrides = new Map<AgentMessage, string>();
   private activeEmit: SessionEventSink | undefined;
   private abortRequested = false;
   private promptTail: Promise<void> = Promise.resolve();
@@ -321,7 +323,11 @@ class PiBackendSession implements BackendSession {
     return {
       cwd: this.cwd,
       id: this.id,
-      messages: translateMessages(this.id, this.session.messages),
+      messages: translateMessages(
+        this.id,
+        this.session.messages,
+        this.messageIdOverrides
+      ),
       permission: [...this.permission],
       status: this.session.isStreaming ? "running" : this.status,
       title: this.title,
@@ -358,14 +364,30 @@ class PiBackendSession implements BackendSession {
     }
     this.status = "running";
     this.activeEmit = emit;
+    const promptMessageIndex = this.session.messages.length;
+    const rememberPromptMessage = (): void => {
+      if (input.messageId === undefined) return;
+      const message = this.session.messages[promptMessageIndex];
+      if (message?.role === "user")
+        this.messageIdOverrides.set(message, input.messageId);
+    };
     emitStatus(this.id, this.status, emit);
     const messageIds = new Map<string, string>();
     const unsubscribe = this.session.subscribe((event: AgentSessionEvent) => {
+      if (
+        input.messageId !== undefined &&
+        (event.type === "message_start" || event.type === "message_end") &&
+        event.message.role === "user" &&
+        this.session.messages.indexOf(event.message) === promptMessageIndex
+      ) {
+        this.messageIdOverrides.set(event.message, input.messageId);
+      }
       for (const translated of translateAgentEvent(
         this.id,
         event,
         this.session.messages,
-        messageIds
+        messageIds,
+        this.messageIdOverrides
       )) {
         emit(translated);
       }
@@ -390,6 +412,7 @@ class PiBackendSession implements BackendSession {
         input.text,
         images === undefined ? undefined : { images }
       );
+      rememberPromptMessage();
       if (!this.wasAborted()) this.status = "idle";
       emitStatus(this.id, this.status, emit);
       return this.snapshot();
@@ -406,6 +429,7 @@ class PiBackendSession implements BackendSession {
       });
       throw error;
     } finally {
+      rememberPromptMessage();
       unsubscribe();
       if (this.activeEmit === emit) this.activeEmit = undefined;
     }

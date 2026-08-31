@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { EventHub } from "../src/events.ts";
 import { createHandler } from "../src/server.ts";
 import { InMemorySessionBackend, SessionRegistry } from "../src/sessions.ts";
-import type { ShimConfig } from "../src/types.ts";
+import type { FacadeEvent, ShimConfig } from "../src/types.ts";
 
 const config: ShimConfig = {
   agentDir: undefined,
@@ -45,6 +45,38 @@ function promptRequest(id: string, text: string): Request {
 }
 
 describe("prompt and lifecycle facade", () => {
+  test("preserves a caller message ID in snapshots and message events", async () => {
+    const { events, handler, registry } = createTestHandler();
+    await createSession(handler, "thread-message-id");
+    const seen: FacadeEvent[] = [];
+
+    const snapshot = await registry.promptSession(
+      "thread-message-id",
+      { images: [], messageId: "msg_external", text: "hello" },
+      (event) => {
+        events.publish(event);
+        seen.push(event);
+      }
+    );
+
+    expect(snapshot?.messages[0]?.id).toBe("msg_external");
+    expect(
+      seen.some(
+        (event) =>
+          event.type === "message.created" &&
+          event.properties.messageId === "msg_external"
+      )
+    ).toBe(true);
+
+    const lookup = await handler(
+      new Request(
+        "http://shim.test/session/thread-message-id/message/msg_external"
+      )
+    );
+    expect(lookup.status).toBe(200);
+    expect((await lookup.json()).info.id).toBe("msg_external");
+  });
+
   test("streams scoped SSE events and retains a tool result", async () => {
     const { handler } = createTestHandler();
     await createSession(handler, "thread-tools");

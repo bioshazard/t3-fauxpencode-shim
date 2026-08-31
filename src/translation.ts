@@ -63,9 +63,10 @@ function translateToolResultContent(
 function translateMessage(
   sessionId: string,
   index: number,
-  message: AgentMessage
+  message: AgentMessage,
+  messageIds: ReadonlyMap<AgentMessage, string>
 ): FacadeMessage | null {
-  const id = `${sessionId}-message-${index + 1}`;
+  const id = messageIds.get(message) ?? `${sessionId}-message-${index + 1}`;
   if (message.role === "user") {
     return {
       id,
@@ -100,10 +101,11 @@ function translateMessage(
 
 export function translateMessages(
   sessionId: string,
-  messages: readonly AgentMessage[]
+  messages: readonly AgentMessage[],
+  messageIds: ReadonlyMap<AgentMessage, string> = new Map()
 ): readonly FacadeMessage[] {
   return messages.flatMap((message, index) => {
-    const translated = translateMessage(sessionId, index, message);
+    const translated = translateMessage(sessionId, index, message, messageIds);
     return translated === null ? [] : [translated];
   });
 }
@@ -118,9 +120,10 @@ function sessionEvent(
 
 function latestMessage(
   sessionID: string,
-  messages: readonly AgentMessage[]
+  messages: readonly AgentMessage[],
+  messageIds: ReadonlyMap<AgentMessage, string>
 ): FacadeMessage | undefined {
-  const translated = translateMessages(sessionID, messages);
+  const translated = translateMessages(sessionID, messages, messageIds);
   return translated[translated.length - 1];
 }
 
@@ -134,7 +137,8 @@ function eventMessageId(
   sessionID: string,
   message: AgentMessage,
   messages: readonly AgentMessage[],
-  messageIds: Map<string, string>
+  eventMessageIds: Map<string, string>,
+  messageIdOverrides: ReadonlyMap<AgentMessage, string>
 ): string | undefined {
   if (
     message.role !== "user" &&
@@ -144,11 +148,16 @@ function eventMessageId(
     return undefined;
   }
   const key = `${message.role}:${message.timestamp}`;
-  const known = messageIds.get(key);
+  const known = eventMessageIds.get(key);
   if (known !== undefined) return known;
+  const override = messageIdOverrides.get(message);
+  if (override !== undefined) {
+    eventMessageIds.set(key, override);
+    return override;
+  }
   const index = messages.indexOf(message);
   const id = `${sessionID}-message-${index < 0 ? messages.length + 1 : index + 1}`;
-  messageIds.set(key, id);
+  eventMessageIds.set(key, id);
   return id;
 }
 
@@ -156,7 +165,8 @@ export function translateAgentEvent(
   sessionID: string,
   event: AgentSessionEvent,
   messages: readonly AgentMessage[],
-  messageIds: Map<string, string> = new Map()
+  messageIds: Map<string, string> = new Map(),
+  messageIdOverrides: ReadonlyMap<AgentMessage, string> = new Map()
 ): readonly FacadeEvent[] {
   switch (event.type) {
     case "agent_start":
@@ -181,18 +191,20 @@ export function translateAgentEvent(
             sessionID,
             event.message,
             messages,
-            messageIds
+            messageIds,
+            messageIdOverrides
           ),
         }),
       ];
     }
     case "message_end": {
-      const message = latestMessage(sessionID, messages);
+      const message = latestMessage(sessionID, messages, messageIdOverrides);
       const messageId = eventMessageId(
         sessionID,
         event.message,
         messages,
-        messageIds
+        messageIds,
+        messageIdOverrides
       );
       return message === undefined
         ? []
@@ -222,12 +234,13 @@ export function translateAgentEvent(
         }),
       ];
     case "turn_end": {
-      const message = latestMessage(sessionID, messages);
+      const message = latestMessage(sessionID, messages, messageIdOverrides);
       const messageId = eventMessageId(
         sessionID,
         event.message,
         messages,
-        messageIds
+        messageIds,
+        messageIdOverrides
       );
       return [
         sessionEvent(sessionID, "turn.completed", {
