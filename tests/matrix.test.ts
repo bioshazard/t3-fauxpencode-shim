@@ -377,4 +377,35 @@ describe("contract matrix", () => {
       )
     ).rejects.toThrow("requires non-applicable reference scenario");
   });
+
+  test("requires pinned T3 evidence for excluded rows without raw capture", async () => {
+    const { manifest } = await verifiedFixture();
+    await expect(
+      validateMatrixEvidence(
+        frozenRow(
+          ["t3:OC-HTTP-0001#verifyOpenCodeServerVersion"],
+          "excluded",
+          "C01"
+        ),
+        manifest
+      )
+    ).resolves.toBeUndefined();
+  });
+
+  test("rejects arbitrary exclusion evidence", async () => {
+    const { manifest } = await verifiedFixture();
+    await expect(
+      validateMatrixEvidence(
+        frozenRow(["excluded by T3"], "excluded"),
+        manifest
+      )
+    ).rejects.toThrow("invalid evidence");
+  });
+
+  test("rejects excluded rows without pinned source evidence", async () => {
+    const { manifest } = await verifiedFixture();
+    await expect(
+      validateMatrixEvidence(frozenRow(["raw:C01#1"], "excluded"), manifest)
+    ).rejects.toThrow("needs T3 exclusion evidence");
+  });
 });

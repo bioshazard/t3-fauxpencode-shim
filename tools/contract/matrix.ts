@@ -249,6 +249,25 @@ function sourceReferenceMatches(
   ].includes(reference);
 }
 
+function resolvesPinnedT3Source(
+  reference: string,
+  entry: {
+    readonly id: string;
+    readonly sources: readonly {
+      readonly path: string;
+      readonly line: number;
+      readonly symbol: string;
+      readonly repository: string;
+    }[];
+  }
+): boolean {
+  return entry.sources.some(
+    (source) =>
+      source.repository.includes("/t3code") &&
+      sourceReferenceMatches(reference, entry.id, source)
+  );
+}
+
 export function pathMatches(pattern: string, actual: string): boolean {
   const expected = pattern.split("/");
   const received = actual.split("/");
@@ -424,7 +443,32 @@ export async function validateMatrixEvidence(
       throw new Error(
         `Frozen matrix row ${rowId} requires non-applicable reference scenario ${scenario.id}.`
       );
-    if (rowValue.support === "excluded") continue;
+    if (rowValue.support === "excluded") {
+      const operation = isString(rowValue.operation) ? rowValue.operation : "";
+      const inventoryEntry = inventory.entries.find(
+        (entry) => entry.operation === operation
+      );
+      if (inventoryEntry === undefined)
+        throw new Error(
+          `Frozen matrix row ${rowId} operation is not in the pinned inventory.`
+        );
+      let t3Evidence = 0;
+      const evidence = rowValue.evidence as readonly JsonValue[];
+      for (const value of evidence) {
+        const parsed = readEvidenceReference(value, rowId);
+        if (parsed.kind !== "t3") continue;
+        if (!resolvesPinnedT3Source(parsed.reference as string, inventoryEntry))
+          throw new Error(
+            `Frozen matrix row ${rowId} T3 evidence does not resolve to a pinned inventory source.`
+          );
+        t3Evidence += 1;
+      }
+      if (t3Evidence === 0)
+        throw new Error(
+          `Frozen matrix row ${rowId} needs T3 exclusion evidence.`
+        );
+      continue;
+    }
     if (scenario.applicability === "not-applicable") continue;
 
     validateRowExpectedBehavior(rowValue, rowId);
@@ -450,12 +494,7 @@ export async function validateMatrixEvidence(
       const parsed = readEvidenceReference(value, rowId);
       if (parsed.kind === "t3") {
         const reference = parsed.reference as string;
-        const matchesT3Source = inventoryEntry.sources.some(
-          (source) =>
-            source.repository.includes("/t3code") &&
-            sourceReferenceMatches(reference, inventoryEntry.id, source)
-        );
-        if (!matchesT3Source)
+        if (!resolvesPinnedT3Source(reference, inventoryEntry))
           throw new Error(
             `Frozen matrix row ${rowId} T3 evidence does not resolve to a pinned inventory source.`
           );
