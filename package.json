@@ -16,6 +16,7 @@
     "contract:inventory": "bun run tools/contract/inventory.ts",
     "contract:matrix": "bun run tools/contract/matrix.ts",
     "contract:record": "bun run tools/contract/record.ts",
+    "contract:scenarios": "bun run tools/contract/scenarios.ts",
     "prepare": "lefthook install"
   },
   "dependencies": {
