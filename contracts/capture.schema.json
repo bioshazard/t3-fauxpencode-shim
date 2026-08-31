@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "sequence",
+    "startedAt",
+    "durationMs",
+    "request",
+    "body",
+    "connection"
+  ],
+  "properties": {
+    "sequence": { "type": "integer", "minimum": 1 },
+    "startedAt": { "type": "string", "format": "date-time" },
+    "durationMs": { "type": "number", "minimum": 0 },
+    "request": { "type": "object" },
+    "body": { "type": "object" },
+    "response": { "type": "object" },
+    "connection": {
+      "type": "object",
+      "required": ["state", "reason"],
+      "properties": {
+        "state": { "enum": ["closed", "error"] },
+        "reason": {
+          "enum": [
+            "client-cancelled",
+            "normal",
+            "server-closed",
+            "transport-error"
+          ]
+        },
+        "closedAt": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": false
+    },
+    "correlation": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "sse": {
+      "type": "object",
+      "required": ["frames", "reconnect", "scope"],
+      "properties": {
+        "reconnect": { "type": "integer", "minimum": 1 },
+        "scope": { "enum": ["global", "session", "unknown"] },
+        "frames": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["raw", "data", "event", "comments", "receivedAtMs"],
+            "properties": {
+              "raw": { "type": "string" },
+              "data": { "type": "string" },
+              "event": { "type": ["string", "null"] },
+              "id": { "type": "string" },
+              "retry": { "type": "integer", "minimum": 0 },
+              "comments": { "type": "array", "items": { "type": "string" } },
+              "receivedAtMs": { "type": "number", "minimum": 0 },
+              "parsed": {}
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

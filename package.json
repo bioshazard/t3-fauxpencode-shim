@@ -15,6 +15,7 @@
     "check": "bun run format:check && bun run lint && bun run typecheck",
     "contract:inventory": "bun run tools/contract/inventory.ts",
     "contract:matrix": "bun run tools/contract/matrix.ts",
+    "contract:capture": "bun run tools/contract/capture.ts",
     "contract:record": "bun run tools/contract/record.ts",
     "contract:scenarios": "bun run tools/contract/scenarios.ts",
     "prepare": "lefthook install"

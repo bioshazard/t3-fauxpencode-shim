@@ -30,6 +30,14 @@ bun run contract:record
 
 The proxy preserves method, path, query, status, headers, body text, SSE framing as delivered by `fetch`, connection errors, sequence numbers, and timing. Authorization/cookie headers, home-directory prefixes, and common bearer/key forms are replaced with stable placeholders. Bodies are capped at 8 MiB by default; set `CAPTURE_MAX_BODY_BYTES` when a larger fixture is required.
 
+Validate a raw capture before using it as evidence:
+
+```sh
+bun run contract:capture -- artifacts/raw/<corpus>.jsonl
+```
+
+Validation fails on malformed records, non-monotonic sequences, incomplete structured SSE fields, missing close metadata, or obvious unredacted credentials.
+
 ## Drive headless scenarios
 
 Point the scenario driver at the recorder URL so the same requests are captured:
