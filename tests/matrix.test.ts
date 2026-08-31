@@ -86,9 +86,12 @@ function captureRecord(
   };
 }
 
-function scenarioEntry(id: string): Record<string, unknown> {
+function scenarioEntry(
+  id: string,
+  applicability: "required" | "not-applicable" = "required"
+): Record<string, unknown> {
   return {
-    applicability: "required",
+    applicability,
     canonicalState: { id, source: "t3" },
     declaredState: { id, source: "fixture" },
     expectedTerminal: "done",
@@ -99,10 +102,16 @@ function scenarioEntry(id: string): Record<string, unknown> {
       { body: "{}", method: "GET", path: "/global/health", status: 200 },
     ],
     passed: true,
+    ...(applicability === "not-applicable"
+      ? { skipReason: "fixture does not exercise this scenario" }
+      : {}),
   };
 }
 
-async function verifiedFixture() {
+async function verifiedFixture(notApplicableScenario?: string): Promise<{
+  readonly capturePath: string;
+  readonly manifest: Parameters<typeof validateMatrixEvidence>[1];
+}> {
   const root = await mkdtemp(join(tmpdir(), "matrix-evidence-"));
   const capturePath = join(root, "capture.jsonl");
   const scenarioPath = join(root, "scenarios.json");
@@ -112,7 +121,12 @@ async function verifiedFixture() {
   const scenario = JSON.stringify({
     corpusId: PINNED_CORPUS,
     runId: "run",
-    scenarios: REQUIRED_REFERENCE_SCENARIOS.map(scenarioEntry),
+    scenarios: REQUIRED_REFERENCE_SCENARIOS.map((id) =>
+      scenarioEntry(
+        id,
+        id === notApplicableScenario ? "not-applicable" : "required"
+      )
+    ),
     status: "completed",
   });
   await Bun.write(capturePath, capture);
@@ -138,7 +152,11 @@ async function verifiedFixture() {
   };
 }
 
-function frozenRow(evidence: JsonValue[]): Matrix {
+function frozenRow(
+  evidence: JsonValue[],
+  support: "required" | "conditional" | "excluded" = "required",
+  scenario = "C01"
+): Matrix {
   return {
     corpusId: PINNED_CORPUS,
     rows: [
@@ -163,8 +181,8 @@ function frozenRow(evidence: JsonValue[]): Matrix {
           status: 200,
         },
         stateEffect: {},
-        scenario: "C01",
-        support: "required",
+        scenario,
+        support,
         trigger: "startup",
       },
     ],
@@ -320,5 +338,43 @@ describe("contract matrix", () => {
     await expect(validateMatrixEvidence(row, manifest)).rejects.toThrow(
       "request body does not match"
     );
+  });
+
+  test("validates conditional rows when their scenario is applicable", async () => {
+    const { manifest } = await verifiedFixture();
+    await expect(
+      validateMatrixEvidence(
+        frozenRow(
+          ["raw:C02#2", "t3:OC-HTTP-0001#verifyOpenCodeServerVersion"],
+          "conditional",
+          "C02"
+        ),
+        manifest
+      )
+    ).resolves.toBeUndefined();
+  });
+
+  test("skips conditional rows only for explicitly not-applicable scenarios", async () => {
+    const { manifest } = await verifiedFixture("C02");
+    await expect(
+      validateMatrixEvidence(
+        frozenRow(["forged evidence"], "conditional", "C02"),
+        manifest
+      )
+    ).resolves.toBeUndefined();
+  });
+
+  test("rejects required rows for not-applicable scenarios", async () => {
+    const { manifest } = await verifiedFixture("C02");
+    await expect(
+      validateMatrixEvidence(
+        frozenRow(
+          ["raw:C02#2", "t3:OC-HTTP-0001#verifyOpenCodeServerVersion"],
+          "required",
+          "C02"
+        ),
+        manifest
+      )
+    ).rejects.toThrow("requires non-applicable reference scenario");
   });
 });

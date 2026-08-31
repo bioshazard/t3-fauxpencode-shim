@@ -424,7 +424,8 @@ export async function validateMatrixEvidence(
       throw new Error(
         `Frozen matrix row ${rowId} requires non-applicable reference scenario ${scenario.id}.`
       );
-    if (rowValue.support !== "required") continue;
+    if (rowValue.support === "excluded") continue;
+    if (scenario.applicability === "not-applicable") continue;
 
     validateRowExpectedBehavior(rowValue, rowId);
     if (

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import {
   assertPinnedT3Checkout,
+  assertPinnedT3Argv,
   assertAcceptanceReport,
   assertEquivalentScenarioReports,
 } from "../tools/contract/acceptance.ts";
@@ -151,5 +152,20 @@ describe("shim acceptance gate", () => {
     await expect(
       assertPinnedT3Checkout(process.cwd(), "0".repeat(40))
     ).rejects.toThrow("expected pinned");
+  });
+
+  test("rejects a dirty T3 checkout", async () => {
+    await expect(
+      assertPinnedT3Checkout("ignored", "pinned", async () => ({
+        head: "pinned",
+        status: " M tracked-file",
+      }))
+    ).rejects.toThrow("unmodified");
+  });
+
+  test("requires the exact verified T3 argv", () => {
+    expect(() =>
+      assertPinnedT3Argv(["pnpm", "test"], ["pnpm", "other"])
+    ).toThrow("exactly match");
   });
 });

@@ -39,12 +39,23 @@ export interface AcceptanceHarnessConfig {
   readonly timeoutMs: number;
 }
 
-export type AcceptanceHarness = (
-  config: AcceptanceHarnessConfig
-) => Promise<void>;
+export interface AcceptanceProcessConfig extends AcceptanceHarnessConfig {
+  readonly argv: readonly string[];
+  readonly cwd: string;
+  readonly env: Readonly<Record<string, string | undefined>>;
+}
+
+export type AcceptanceProcessRunner = (
+  config: AcceptanceProcessConfig
+) => Promise<number>;
+
+export type AcceptanceGitInspector = (
+  cwd: string
+) => Promise<{ readonly head: string; readonly status: string }>;
 
 export interface AcceptanceOptions {
-  readonly harness?: AcceptanceHarness;
+  readonly gitInspector?: AcceptanceGitInspector;
+  readonly processRunner?: AcceptanceProcessRunner;
 }
 
 type MatrixRecord = { readonly [key: string]: unknown };
@@ -70,17 +81,12 @@ function readArgv(name: string): readonly string[] {
 }
 
 async function runConfiguredHarness(
-  config: AcceptanceHarnessConfig
+  config: AcceptanceHarnessConfig,
+  argv: readonly string[],
+  cwd: string,
+  processRunner: AcceptanceProcessRunner
 ): Promise<void> {
-  if (Bun.env.SHIM_ACCEPTANCE_T3_KIND !== "stock-t3-opencode-adapter")
-    throw new Error(
-      "SHIM_ACCEPTANCE_T3_KIND must be stock-t3-opencode-adapter."
-    );
-  const argv = readArgv("SHIM_ACCEPTANCE_T3_ARGV");
-  const cwd = Bun.env.SHIM_ACCEPTANCE_T3_CWD;
-  if (cwd === undefined || cwd.trim().length === 0)
-    throw new Error("SHIM_ACCEPTANCE_T3_CWD is required.");
-  const env = {
+  const env: Record<string, string | undefined> = {
     ...process.env,
     CAPTURE_TARGET: config.target,
     CONTRACT_RUN_ID: config.runId,
@@ -89,14 +95,20 @@ async function runConfiguredHarness(
     SCENARIO_OUTPUT: config.scenarioOutput,
     SCENARIO_TARGET: config.target,
     SHIM_ACCEPTANCE_TARGET: config.target,
-    ...(config.barrierUrl === undefined
-      ? {}
-      : { SCENARIO_BARRIER_URL: config.barrierUrl }),
+    SCENARIO_BARRIER_URL: config.barrierUrl,
   };
+  const exitCode = await processRunner({ ...config, argv, cwd, env });
+  if (exitCode !== 0)
+    throw new Error(
+      `Stock T3 shim acceptance command exited with ${exitCode}.`
+    );
+}
+
+const defaultProcessRunner: AcceptanceProcessRunner = async (config) => {
   const child = Bun.spawn({
-    cmd: [...argv],
-    cwd,
-    env,
+    cmd: [...config.argv],
+    cwd: config.cwd,
+    env: config.env,
     stderr: "inherit",
     stdout: "inherit",
   });
@@ -107,31 +119,61 @@ async function runConfiguredHarness(
     await child.exited;
     throw new Error("Stock T3 shim acceptance command timed out.");
   }
-  if (exitCode !== 0)
-    throw new Error(
-      `Stock T3 shim acceptance command exited with ${exitCode}.`
-    );
-}
+  return exitCode;
+};
 
 export async function assertPinnedT3Checkout(
   cwd: string,
-  expectedCommit: string
+  expectedCommit: string,
+  inspector: AcceptanceGitInspector = defaultGitInspector
 ): Promise<void> {
-  const process = Bun.spawn({
+  const inspected = await inspector(cwd);
+  if (inspected.head !== expectedCommit)
+    throw new Error(
+      `Shim acceptance T3 checkout is ${inspected.head}, expected pinned ${expectedCommit}.`
+    );
+  if (inspected.status.trim().length > 0)
+    throw new Error(
+      "Shim acceptance T3 checkout must be an unmodified worktree."
+    );
+}
+
+async function defaultGitInspector(
+  cwd: string
+): Promise<{ readonly head: string; readonly status: string }> {
+  const headProcess = Bun.spawn({
     cmd: ["git", "-C", cwd, "rev-parse", "HEAD"],
     stderr: "pipe",
     stdout: "pipe",
   });
-  const output = await new Response(process.stdout).text();
-  const exitCode = await process.exited;
-  if (exitCode !== 0)
+  const headOutput = await new Response(headProcess.stdout).text();
+  const headExitCode = await headProcess.exited;
+  if (headExitCode !== 0)
     throw new Error(
       "Shim acceptance T3 checkout is not a readable git worktree."
     );
-  const actual = output.trim();
-  if (actual !== expectedCommit)
+  const statusProcess = Bun.spawn({
+    cmd: ["git", "-C", cwd, "status", "--porcelain", "--untracked-files=all"],
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const status = await new Response(statusProcess.stdout).text();
+  const statusExitCode = await statusProcess.exited;
+  if (statusExitCode !== 0)
+    throw new Error("Shim acceptance T3 checkout status could not be read.");
+  return { head: headOutput.trim(), status };
+}
+
+export function assertPinnedT3Argv(
+  actual: readonly string[],
+  expected: readonly string[]
+): void {
+  if (
+    actual.length !== expected.length ||
+    actual.some((part, index) => part !== expected[index])
+  )
     throw new Error(
-      `Shim acceptance T3 checkout is ${actual}, expected pinned ${expectedCommit}.`
+      "SHIM_ACCEPTANCE_T3_ARGV must exactly match the verified reference t3Argv."
     );
 }
 
@@ -295,8 +337,6 @@ function assertMatrixRows(
   for (const value of rows) {
     const row = rowRecord(value, "unknown");
     const rowId = isStringValue(row.id) ? row.id : "unknown";
-    if (row.support !== "required") continue;
-    assertRowSupported(row, rowId);
     const scenarioId = row.scenario;
     if (!isStringValue(scenarioId))
       throw new Error(`Shim acceptance matrix row ${rowId} has no scenario.`);
@@ -306,6 +346,18 @@ function assertMatrixRows(
       throw new Error(
         `Shim acceptance matrix row ${rowId} references missing scenario ${scenarioId}.`
       );
+    if (row.support === "excluded") continue;
+    if (
+      row.support === "conditional" &&
+      expected.applicability === "not-applicable" &&
+      actual.applicability === "not-applicable"
+    )
+      continue;
+    if (row.support !== "required" && row.support !== "conditional")
+      throw new Error(
+        `Shim acceptance matrix row ${rowId} has unsupported support value.`
+      );
+    assertRowSupported(row, rowId);
     if (
       expected.applicability !== "required" ||
       actual.applicability !== "required"
@@ -459,6 +511,7 @@ export function assertAcceptanceReport(
 
 async function loadReferenceScenarioReport(manifestPath: string): Promise<{
   readonly manifestT3Commit: string;
+  readonly manifestT3Argv: readonly string[];
   readonly report: ComparableReport;
 }> {
   const manifest = await verifyReferenceArtifacts(manifestPath);
@@ -471,6 +524,7 @@ async function loadReferenceScenarioReport(manifestPath: string): Promise<{
     throw new Error("Reference scenario report does not match its manifest.");
   return {
     manifestT3Commit: manifest.t3Commit,
+    manifestT3Argv: manifest.t3Argv,
     report: {
       corpusId: report.corpusId,
       scenarios: report.scenarios,
@@ -536,12 +590,20 @@ export async function runAcceptance(
   const referenceEvidence = await loadReferenceScenarioReport(
     referenceManifestPath
   );
-  if (options.harness === undefined) {
-    const t3Cwd = Bun.env.SHIM_ACCEPTANCE_T3_CWD;
-    if (t3Cwd === undefined || t3Cwd.trim().length === 0)
-      throw new Error("SHIM_ACCEPTANCE_T3_CWD is required.");
-    await assertPinnedT3Checkout(t3Cwd, referenceEvidence.manifestT3Commit);
-  }
+  if (Bun.env.SHIM_ACCEPTANCE_T3_KIND !== "stock-t3-opencode-adapter")
+    throw new Error(
+      "SHIM_ACCEPTANCE_T3_KIND must be stock-t3-opencode-adapter."
+    );
+  const t3Argv = readArgv("SHIM_ACCEPTANCE_T3_ARGV");
+  assertPinnedT3Argv(t3Argv, referenceEvidence.manifestT3Argv);
+  const t3Cwd = Bun.env.SHIM_ACCEPTANCE_T3_CWD;
+  if (t3Cwd === undefined || t3Cwd.trim().length === 0)
+    throw new Error("SHIM_ACCEPTANCE_T3_CWD is required.");
+  await assertPinnedT3Checkout(
+    t3Cwd,
+    referenceEvidence.manifestT3Commit,
+    options.gitInspector
+  );
   const acceptanceRunId = crypto.randomUUID();
   const startedAtMs = Date.now();
   const generatedScenarioOutput = resolve(
@@ -549,15 +611,19 @@ export async function runAcceptance(
       ? `${output}.${acceptanceRunId}.scenario.json`
       : scenarioOutput
   );
-  const harness = options.harness ?? runConfiguredHarness;
-  await harness({
-    barrierUrl,
-    corpusId,
-    runId: acceptanceRunId,
-    scenarioOutput: generatedScenarioOutput,
-    target,
-    timeoutMs,
-  });
+  await runConfiguredHarness(
+    {
+      barrierUrl,
+      corpusId,
+      runId: acceptanceRunId,
+      scenarioOutput: generatedScenarioOutput,
+      target,
+      timeoutMs,
+    },
+    t3Argv,
+    t3Cwd,
+    options.processRunner ?? defaultProcessRunner
+  );
   const report = await loadShimScenarioReport(
     generatedScenarioOutput,
     target,
