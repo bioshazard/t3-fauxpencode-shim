@@ -165,6 +165,25 @@ describe("reference artifact validation", () => {
     ).toThrow("body must be string or null");
   });
 
+  test("rejects runner-derived canonical evidence for required scenarios", () => {
+    const scenarios = (
+      report().scenarios as Array<Record<string, unknown>>
+    ).map((entry) =>
+      entry.id === "C06"
+        ? {
+            ...entry,
+            canonicalState: { source: "scenario-runner-derived" },
+          }
+        : entry
+    );
+    expect(() =>
+      validateCompletedScenarioReport(report({ scenarios }), {
+        corpusId: "corpus",
+        runId: "run",
+      })
+    ).toThrow("must be T3-sourced");
+  });
+
   test("validates the reference manifest shape", () => {
     expect(
       decodeReferenceManifest({

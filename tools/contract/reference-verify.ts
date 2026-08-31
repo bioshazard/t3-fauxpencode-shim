@@ -15,7 +15,7 @@ import {
 
 type JsonRecord = { readonly [key: string]: unknown };
 
-async function readJson(path: string): Promise<unknown> {
+async function readJson(path: string | URL): Promise<unknown> {
   try {
     return JSON.parse(await Bun.file(path).text()) as unknown;
   } catch {
@@ -25,7 +25,7 @@ async function readJson(path: string): Promise<unknown> {
 
 async function readPinnedManifest(): Promise<JsonRecord> {
   const value = await readJson(
-    new URL("../../contracts/manifest.json", import.meta.url).pathname
+    new URL("../../contracts/manifest.json", import.meta.url)
   );
   if (
     !isRecordValue(value) ||

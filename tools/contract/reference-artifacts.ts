@@ -488,10 +488,14 @@ export function decodeScenarioReport(value: unknown): ScenarioReport {
         declaredState,
         `Scenario report entry ${id} declaredState`
       );
-      requireEvidenceSource(
+      const canonicalEvidence = requireEvidenceSource(
         canonicalState,
         `Scenario report entry ${id} canonicalState`
       );
+      if (applicability === "required" && canonicalEvidence.source !== "t3")
+        throw new Error(
+          `Scenario report entry ${id} canonicalState must be T3-sourced.`
+        );
       const operations = scenario.operations;
       if (!Array.isArray(operations) || operations.length === 0)
         throw new Error(
