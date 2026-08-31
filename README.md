@@ -18,6 +18,7 @@ bun run contract:capture -- artifacts/raw/<corpus>.jsonl
 bun run contract:record
 bun run contract:scenarios
 bun run contract:reference
+bun run contract:reference-verify -- artifacts/runs/<corpus>.reference.json
 ```
 
 The POC is intentionally explicit about unsupported requests. It does not run OpenCode and does not claim complete OpenCode compatibility.

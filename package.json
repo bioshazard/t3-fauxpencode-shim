@@ -17,6 +17,7 @@
     "contract:matrix": "bun run tools/contract/matrix.ts",
     "contract:capture": "bun run tools/contract/capture.ts",
     "contract:reference": "bun run tools/contract/reference.ts",
+    "contract:reference-verify": "bun run tools/contract/reference-verify.ts",
     "contract:record": "bun run tools/contract/record.ts",
     "contract:scenarios": "bun run tools/contract/scenarios.ts",
     "prepare": "lefthook install"

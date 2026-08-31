@@ -71,6 +71,14 @@ bun run contract:reference
 
 The supervisor verifies both checkout HEADs against `contracts/manifest.json`, runs OpenCode from its pinned checkout, and passes the recorder URL as `OPENCODE_BASE_URL` to T3. `REFERENCE_T3_ARGV` must invoke the unmodified pinned T3 provider path; the supervisor rejects missing commands and does not substitute the raw-fetch scenario driver. The T3 harness must propagate `CONTRACT_RUN_ID` and `x-contract-scenario` through its test transport, and must write the scenario report at `SCENARIO_OUTPUT`. A successful run validates the capture JSONL and requires every scenario report entry to pass before writing a reference-run manifest. The command fails if either checkout is not pinned, OpenCode never becomes healthy, T3 exits non-zero, the scenario report is partial, or capture validation fails.
 
+Verify a completed corpus independently after the supervisor exits:
+
+```sh
+bun run contract:reference-verify -- artifacts/runs/<corpus>.reference.json
+```
+
+Verification checks the recorded T3/OpenCode commits, capture and scenario-report SHA-256 digests, capture correlation, and complete passed scenario set.
+
 ## Maintain evidence
 
 1. Update `contracts/manifest.json` for a new upstream identity; never overwrite a corpus with a different identity.
