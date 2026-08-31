@@ -473,9 +473,12 @@ function finalizeScenarios(
     return {
       ...publicScenario,
       applicability: scenario.applicability ?? "required",
-      canonicalState:
-        scenario.canonicalState ?? operationBody(scenario.operations.at(-1)),
+      canonicalState: scenario.canonicalState ?? {
+        source: "scenario-runner-derived",
+        value: operationBody(scenario.operations.at(-1)) ?? null,
+      },
       declaredState: scenario.declaredState ?? {
+        source: "scenario-runner-derived",
         scenario: scenario.id,
         sessionId: scenario.sessionId ?? null,
       },

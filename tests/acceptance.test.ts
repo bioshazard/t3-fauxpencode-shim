@@ -11,8 +11,8 @@ function report(status: "completed" | "partial" = "completed", passed = true) {
     runId: "run",
     scenarios: REQUIRED_REFERENCE_SCENARIOS.map((id) => ({
       applicability: "required" as const,
-      canonicalState: { id },
-      declaredState: { id },
+      canonicalState: { id, source: "t3" },
+      declaredState: { id, source: "fixture" },
       expectedTerminal: "done",
       failures: passed && id === "C01" ? [] : passed ? [] : ["failed"],
       id,
@@ -34,5 +34,14 @@ describe("shim acceptance gate", () => {
     expect(() => assertAcceptanceReport(report("completed", false))).toThrow(
       "C01"
     );
+  });
+
+  test("rejects runner-derived canonical state", () => {
+    const derived = report();
+    derived.scenarios[0].canonicalState = {
+      id: "C01",
+      source: "scenario-runner-derived",
+    };
+    expect(() => assertAcceptanceReport(derived)).toThrow("not T3-sourced");
   });
 });

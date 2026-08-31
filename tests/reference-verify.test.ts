@@ -16,8 +16,8 @@ function digest(value: string): string {
 function scenarioEntry(id: string): Record<string, unknown> {
   return {
     applicability: "required",
-    canonicalState: { id },
-    declaredState: { id },
+    canonicalState: { id, source: "t3" },
+    declaredState: { id, source: "fixture" },
     expectedTerminal: "terminal",
     failures: [],
     id,

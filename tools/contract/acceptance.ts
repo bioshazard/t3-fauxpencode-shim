@@ -2,7 +2,10 @@ import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 
 import { loadMatrix, validateMatrix } from "./matrix.ts";
-import { REQUIRED_REFERENCE_SCENARIOS } from "./reference-artifacts.ts";
+import {
+  isRecordValue,
+  REQUIRED_REFERENCE_SCENARIOS,
+} from "./reference-artifacts.ts";
 import { runScenarios, type ScenarioReport } from "./scenarios.ts";
 
 export function assertAcceptanceReport(
@@ -33,6 +36,11 @@ export function assertAcceptanceReport(
     if (!Object.hasOwn(scenario, "canonicalState"))
       throw new Error(
         `Shim acceptance is missing canonical state for ${scenario.id}.`
+      );
+    const canonicalState = scenario.canonicalState;
+    if (!isRecordValue(canonicalState) || canonicalState.source !== "t3")
+      throw new Error(
+        `Shim acceptance canonical state for ${scenario.id} is not T3-sourced.`
       );
   }
   const failed = report.scenarios.filter((scenario) => !scenario.passed);

@@ -133,6 +133,17 @@ function requiredString(
   return result;
 }
 
+function requireEvidenceSource(
+  value: unknown,
+  name: string
+): { readonly source: string } {
+  if (!isRecordValue(value) || !isStringValue(value.source))
+    throw new Error(`${name} evidence must include a source.`);
+  if (value.source.trim().length === 0)
+    throw new Error(`${name} evidence source must be non-empty.`);
+  return { source: value.source };
+}
+
 function readManifestArgv(
   value: { readonly [key: string]: unknown },
   key: string
@@ -473,6 +484,14 @@ export function decodeScenarioReport(value: unknown): ScenarioReport {
         );
       const declaredState = scenario.declaredState;
       const canonicalState = scenario.canonicalState;
+      requireEvidenceSource(
+        declaredState,
+        `Scenario report entry ${id} declaredState`
+      );
+      requireEvidenceSource(
+        canonicalState,
+        `Scenario report entry ${id} canonicalState`
+      );
       const operations = scenario.operations;
       if (!Array.isArray(operations) || operations.length === 0)
         throw new Error(
