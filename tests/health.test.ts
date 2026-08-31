@@ -74,6 +74,16 @@ describe("health and discovery", () => {
     expect(await skills.json()).toEqual([]);
   });
 
+  test("exposes empty pending interaction lists", async () => {
+    const permissions = await request("/permission");
+    const questions = await request("/question");
+
+    expect(permissions.status).toBe(200);
+    expect(questions.status).toBe(200);
+    expect(await permissions.json()).toEqual([]);
+    expect(await questions.json()).toEqual([]);
+  });
+
   test("fails explicitly for unknown routes and malformed work", async () => {
     const unknown = await request("/not-in-contract");
     const session = await createHandler(config)(

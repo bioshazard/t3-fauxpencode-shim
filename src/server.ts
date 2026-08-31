@@ -102,7 +102,12 @@ function createSessionHandler(
       return jsonResponse(providerResponse(config));
     }
 
-    if (url.pathname === "/agent" || url.pathname === "/skill") {
+    if (
+      url.pathname === "/agent" ||
+      url.pathname === "/skill" ||
+      url.pathname === "/permission" ||
+      url.pathname === "/question"
+    ) {
       if (request.method !== "GET") return methodNotAllowed(request);
       return jsonResponse([]);
     }
