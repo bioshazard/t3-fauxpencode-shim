@@ -1,6 +1,6 @@
 # Pi–OpenCode Shim POC
 
-See [`docs/poc.md`](docs/poc.md) for the provisional facade surface and known capture gaps.
+See [`docs/poc.md`](docs/poc.md) for the provisional facade surface and known capture gaps. See [`docs/runbook.md`](docs/runbook.md) for capture, scenario, and verification commands.
 
 Small Bun service exposing the OpenCode-shaped surface needed by the documented T3 integration, backed by Pi sessions.
 

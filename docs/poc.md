@@ -6,12 +6,15 @@ This is a provisional, Bun-native facade. It is not the captured T3 contract yet
 | --- | --- | --- |
 | Health | `GET /global/health` | JSON readiness response |
 | Provider discovery | `GET /provider` | Pi provider and configured model presentation |
+| Optional discovery | `GET /agent`, `GET /skill` | Empty lists until Pi resource discovery is captured |
 | Global events | `GET /event` or `GET /global/event` | SSE stream |
 | Scoped events | `GET /session/:id/event` | Session-filtered SSE stream |
 | Create | `POST /session` | Persistent Pi-backed session |
 | Lookup/list | `GET /session`, `GET /session/:id` | Session snapshots |
 | History | `GET /session/:id/message` | Facade messages projected from Pi |
 | Prompt | `POST /session/:id/message` or `/prompt` | Pi turn plus SSE lifecycle |
+| Async prompt | `POST /session/:id/prompt_async` | Accepted turn plus SSE lifecycle |
+| Session status | `GET /session/status` | Session ID to idle/busy status map |
 | Abort | `POST /session/:id/abort` | Aborted snapshot |
 | Revert | `POST /session/:id/revert` | Tree navigation before target message |
 
