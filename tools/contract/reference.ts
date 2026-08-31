@@ -7,10 +7,11 @@ import {
   REQUIRED_REFERENCE_SCENARIOS,
   decodeReferenceManifest,
   isRecordValue,
-  isRequiredReferenceScenario,
   isStringValue,
   sha256File,
+  type ReferenceProvenance,
   type ReferenceManifest,
+  validateReferenceCorrelations,
   validateCompletedScenarioReport,
 } from "./reference-artifacts.ts";
 
@@ -56,6 +57,87 @@ function requiredEnv(name: string): string {
   if (value === undefined || value.trim().length === 0)
     throw new Error(`${name} is required.`);
   return value;
+}
+
+async function captureProvenance(): Promise<ReferenceProvenance> {
+  const manifest = (await Bun.file(
+    new URL("../../contracts/manifest.json", import.meta.url)
+  ).json()) as unknown;
+  if (!isRecordValue(manifest) || !isRecordValue(manifest.subjects))
+    throw new Error("Pinned manifest is invalid.");
+  const subjects = manifest.subjects;
+  const readSubject = (
+    value: unknown,
+    name: string,
+    packageKey: string,
+    versionKey: string
+  ): {
+    readonly package: string;
+    readonly packageManager: string;
+    readonly packageVersion: string;
+    readonly repository: string;
+  } => {
+    if (!isRecordValue(value))
+      throw new Error(`Pinned manifest subject ${name} is invalid.`);
+    const packageName = value[packageKey];
+    const packageVersion = value[versionKey];
+    const packageManager = value.packageManager;
+    const repository = value.repository;
+    if (
+      !isStringValue(packageName) ||
+      !isStringValue(packageVersion) ||
+      !isStringValue(packageManager) ||
+      !isStringValue(repository)
+    )
+      throw new Error(`Pinned manifest subject ${name} lacks provenance.`);
+    return {
+      package: packageName,
+      packageManager,
+      packageVersion,
+      repository,
+    };
+  };
+  const t3Code = readSubject(
+    subjects.t3Code,
+    "t3Code",
+    "package",
+    "packageVersion"
+  );
+  const openCode = readSubject(
+    subjects.openCode,
+    "openCode",
+    "sdkPackage",
+    "sdkVersion"
+  );
+  if (!isRecordValue(subjects.pi))
+    throw new Error("Pinned manifest Pi subject is invalid.");
+  const piPackage = subjects.pi.package;
+  const piVersion = subjects.pi.packageVersion;
+  if (!isStringValue(piPackage) || !isStringValue(piVersion))
+    throw new Error("Pinned manifest Pi subject lacks provenance.");
+  const piRepository = subjects.pi.repository;
+  return {
+    model: {
+      fixture: requiredEnv("REFERENCE_MODEL_FIXTURE"),
+      model: requiredEnv("REFERENCE_MODEL"),
+      provider: requiredEnv("REFERENCE_MODEL_PROVIDER"),
+    },
+    runtime: {
+      architecture: process.arch,
+      nodeVersion: requiredEnv("REFERENCE_NODE_VERSION"),
+      operatingSystem: process.platform,
+      packageManager: requiredEnv("REFERENCE_PACKAGE_MANAGER"),
+    },
+    subjects: {
+      openCode,
+      pi: {
+        package: piPackage,
+        packageVersion: piVersion,
+        ...(isStringValue(piRepository) ? { repository: piRepository } : {}),
+      },
+      t3Code,
+    },
+  };
 }
 
 async function pinnedCommit(root: string, name: string): Promise<string> {
@@ -266,6 +348,7 @@ async function runReference(
   let status: "failed" | "passed" = "failed";
   let captureSha256: string | undefined;
   let scenarioSha256: string | undefined;
+  let provenance: ReferenceProvenance | undefined;
   const writeManifest = async (): Promise<ReferenceManifest> => {
     const manifest: ReferenceManifest = {
       ...(captureSha256 === undefined ? {} : { captureSha256 }),
@@ -275,6 +358,7 @@ async function runReference(
       generatedAt: new Date().toISOString(),
       openCodeCommit: pinned.openCodeCommit,
       opencodeArgv,
+      ...(provenance === undefined ? {} : { provenance }),
       runId,
       ...(scenarioSha256 === undefined ? {} : { scenarioSha256 }),
       scenarioOutput,
@@ -314,29 +398,7 @@ async function runReference(
       throw new Error(`Stock T3 reference command exited with ${exitCode}.`);
     await store.flush();
     const records = await loadCapture(config.capturePath);
-    if (
-      records.some(
-        (record) => record.correlation?.["x-contract-run-id"] !== runId
-      )
-    )
-      throw new Error("Capture contains records from another run.");
-    const capturedScenarios = new Set(
-      records.flatMap((record) => {
-        const scenario = record.correlation?.["x-contract-scenario"];
-        return scenario === undefined || !isRequiredReferenceScenario(scenario)
-          ? []
-          : [scenario];
-      })
-    );
-    if (
-      records.some((record) => {
-        const scenario = record.correlation?.["x-contract-scenario"];
-        return scenario === undefined || !isRequiredReferenceScenario(scenario);
-      })
-    )
-      throw new Error(
-        "Capture contains an exchange without a known scenario correlation."
-      );
+    const capturedScenarios = validateReferenceCorrelations(records, runId);
     for (const scenario of REQUIRED_REFERENCE_SCENARIOS) {
       if (!capturedScenarios.has(scenario))
         throw new Error(
@@ -349,6 +411,7 @@ async function runReference(
       runId,
       startedAtMs
     );
+    provenance = await captureProvenance();
     captureSha256 = await sha256File(config.capturePath);
     scenarioSha256 = await sha256File(scenarioOutput);
     status = "passed";

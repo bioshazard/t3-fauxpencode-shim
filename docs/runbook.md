@@ -66,10 +66,17 @@ OPENCODE_REFERENCE_ROOT=/path/to/pinned/opencode \
 OPENCODE_REFERENCE_BIN=./node_modules/.bin/opencode \
 REFERENCE_OPENCODE_ARGV='["%OPENCODE_BIN%","serve","--hostname=127.0.0.1","--port=%PORT%"]' \
 REFERENCE_T3_ARGV='["pnpm","test:opencode-adapter"]' \
+REFERENCE_NODE_VERSION='v24.13.1' \
+REFERENCE_PACKAGE_MANAGER='pnpm@11.10.0' \
+REFERENCE_MODEL_PROVIDER=<provider> \
+REFERENCE_MODEL=<model> \
+REFERENCE_MODEL_FIXTURE=<deterministic-fixture> \
 bun run contract:reference
 ```
 
 The supervisor verifies both checkout HEADs against `contracts/manifest.json`, runs OpenCode from its pinned checkout, and passes the recorder URL as `OPENCODE_BASE_URL` to T3. `REFERENCE_T3_ARGV` must invoke the unmodified pinned T3 provider path; the supervisor rejects missing commands and does not substitute the raw-fetch scenario driver. The T3 harness must propagate `CONTRACT_RUN_ID` and `x-contract-scenario` through its test transport, and must write the scenario report at `SCENARIO_OUTPUT`. A successful run validates the capture JSONL and requires every scenario report entry to pass before writing a reference-run manifest. The command fails if either checkout is not pinned, OpenCode never becomes healthy, T3 exits non-zero, the scenario report is partial, or capture validation fails.
+
+The runtime/model variables are required for a passing manifest and are recorded with source package provenance. `REFERENCE_NODE_VERSION` must describe the Node runtime used by the T3 harness; `REFERENCE_PACKAGE_MANAGER` includes its exact version. `REFERENCE_MODEL_FIXTURE` names the deterministic barrier/fixture configuration used by the run.
 
 Verify a completed corpus independently after the supervisor exits:
 

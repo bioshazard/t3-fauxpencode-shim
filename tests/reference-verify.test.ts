@@ -17,8 +17,38 @@ function scenarioEntry(id: string): Record<string, unknown> {
     failures: [],
     id,
     observedEventTypes: [],
-    operations: [{ method: "GET", path: "/", status: 200 }],
+    operations: [{ body: null, method: "GET", path: "/", status: 200 }],
     passed: true,
+  };
+}
+
+function provenance(): Record<string, unknown> {
+  return {
+    model: { fixture: "fixture", model: "model", provider: "provider" },
+    runtime: {
+      architecture: "arm64",
+      nodeVersion: "v24.13.1",
+      operatingSystem: "darwin",
+      packageManager: "pnpm@11.10.0",
+    },
+    subjects: {
+      openCode: {
+        package: "@opencode-ai/sdk",
+        packageManager: "bun@1.3.14",
+        packageVersion: "1.18.25",
+        repository: "https://github.com/anomalyco/opencode.git",
+      },
+      pi: {
+        package: "@earendil-works/pi-coding-agent",
+        packageVersion: "0.84.4",
+      },
+      t3Code: {
+        package: "t3",
+        packageManager: "pnpm@11.10.0",
+        packageVersion: "0.0.37",
+        repository: "https://github.com/pingdotgg/t3code.git",
+      },
+    },
   };
 }
 
@@ -73,6 +103,7 @@ describe("reference corpus verification", () => {
         generatedAt: "2026-08-31T12:00:00.000Z",
         openCodeCommit: "b".repeat(40),
         opencodeArgv: ["opencode", "serve"],
+        provenance: provenance(),
         runId: "run",
         scenarioOutput: scenarioPath,
         scenarioSha256: digest(scenario),
@@ -122,6 +153,7 @@ describe("reference corpus verification", () => {
         generatedAt: "2026-08-31T12:00:00.000Z",
         openCodeCommit: "b".repeat(40),
         opencodeArgv: ["opencode", "serve"],
+        provenance: provenance(),
         runId: "run",
         scenarioOutput: scenarioPath,
         scenarioSha256: digest(scenario),

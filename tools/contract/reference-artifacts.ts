@@ -9,6 +9,26 @@ export function isRequiredReferenceScenario(value: string): boolean {
   return REQUIRED_REFERENCE_SCENARIOS.includes(value);
 }
 
+export function validateReferenceCorrelations(
+  records: readonly {
+    readonly correlation?: Readonly<Record<string, string>>;
+  }[],
+  runId: string
+): ReadonlySet<string> {
+  const scenarios = new Set<string>();
+  for (const record of records) {
+    if (record.correlation?.["x-contract-run-id"] !== runId)
+      throw new Error("Reference capture contains a record from another run.");
+    const scenario = record.correlation?.["x-contract-scenario"];
+    if (scenario === undefined || !isRequiredReferenceScenario(scenario))
+      throw new Error(
+        "Reference capture contains an exchange without a known scenario."
+      );
+    scenarios.add(scenario);
+  }
+  return scenarios;
+}
+
 export interface ReferenceManifest {
   readonly captureSha256?: string;
   readonly capturePath: string;
@@ -17,6 +37,7 @@ export interface ReferenceManifest {
   readonly generatedAt: string;
   readonly openCodeCommit: string;
   readonly opencodeArgv: readonly string[];
+  readonly provenance?: ReferenceProvenance;
   readonly runId: string;
   readonly scenarioSha256?: string;
   readonly scenarioOutput?: string;
@@ -25,14 +46,55 @@ export interface ReferenceManifest {
   readonly t3Argv: readonly string[];
 }
 
+export interface ReferenceProvenance {
+  readonly model: {
+    readonly fixture: string;
+    readonly model: string;
+    readonly provider: string;
+  };
+  readonly runtime: {
+    readonly architecture: string;
+    readonly nodeVersion: string;
+    readonly operatingSystem: string;
+    readonly packageManager: string;
+  };
+  readonly subjects: {
+    readonly openCode: {
+      readonly package: string;
+      readonly packageManager: string;
+      readonly packageVersion: string;
+      readonly repository: string;
+    };
+    readonly pi: {
+      readonly package: string;
+      readonly packageVersion: string;
+      readonly repository?: string;
+    };
+    readonly t3Code: {
+      readonly package: string;
+      readonly packageManager: string;
+      readonly packageVersion: string;
+      readonly repository: string;
+    };
+  };
+}
+
 export interface ScenarioReportEntry {
   readonly expectedTerminal: string;
   readonly failures: readonly string[];
   readonly id: string;
   readonly observedEventTypes: readonly string[];
-  readonly operations: readonly unknown[];
+  readonly operations: readonly ScenarioOperation[];
   readonly passed: boolean;
   readonly [key: string]: unknown;
+}
+
+export interface ScenarioOperation {
+  readonly body: string | null;
+  readonly method: string;
+  readonly path: string;
+  readonly status: number | null;
+  readonly transportError?: string;
 }
 
 export interface ScenarioReport {
@@ -44,6 +106,10 @@ export interface ScenarioReport {
 
 export function isStringValue(value: unknown): value is string {
   return Object.prototype.toString.call(value) === "[object String]";
+}
+
+function isNumberValue(value: unknown): value is number {
+  return Object.prototype.toString.call(value) === "[object Number]";
 }
 
 export function isRecordValue(
@@ -108,6 +174,169 @@ function readOptionalSha256(
   return result;
 }
 
+function readScenarioOperation(
+  value: unknown,
+  scenarioId: string,
+  index: number
+): ScenarioOperation {
+  if (!isRecordValue(value))
+    throw new Error(
+      `Scenario report entry ${scenarioId} operation ${index + 1} must be an object.`
+    );
+  const body = value.body;
+  const method = value.method;
+  const path = value.path;
+  const status = value.status;
+  if (body !== null && !isStringValue(body))
+    throw new Error(
+      `Scenario report entry ${scenarioId} operation ${index + 1} body must be string or null.`
+    );
+  if (!isStringValue(method) || method.trim().length === 0)
+    throw new Error(
+      `Scenario report entry ${scenarioId} operation ${index + 1} method is required.`
+    );
+  if (!isStringValue(path) || path.trim().length === 0)
+    throw new Error(
+      `Scenario report entry ${scenarioId} operation ${index + 1} path is required.`
+    );
+  if (
+    status !== null &&
+    (!isNumberValue(status) ||
+      !Number.isSafeInteger(status) ||
+      status < 100 ||
+      status > 599)
+  )
+    throw new Error(
+      `Scenario report entry ${scenarioId} operation ${index + 1} status is invalid.`
+    );
+  const transportError = value.transportError;
+  if (transportError !== undefined && !isStringValue(transportError))
+    throw new Error(
+      `Scenario report entry ${scenarioId} operation ${index + 1} transportError must be a string.`
+    );
+  return {
+    body: body as string | null,
+    method,
+    path,
+    status: status as number | null,
+    ...(transportError === undefined ? {} : { transportError }),
+  };
+}
+
+function readProvenance(value: unknown): ReferenceProvenance {
+  if (!isRecordValue(value))
+    throw new Error("Reference manifest provenance must be an object.");
+  const model = value.model;
+  const runtime = value.runtime;
+  const subjects = value.subjects;
+  if (
+    !isRecordValue(model) ||
+    !isRecordValue(runtime) ||
+    !isRecordValue(subjects)
+  )
+    throw new Error("Reference manifest provenance is incomplete.");
+  const subject = (
+    value: unknown,
+    name: string
+  ): ReferenceProvenance["subjects"]["t3Code"] => {
+    if (!isRecordValue(value))
+      throw new Error(`Reference manifest provenance ${name} is invalid.`);
+    return {
+      package: requiredString(
+        value,
+        "package",
+        `Reference manifest provenance ${name}.package is required.`
+      ),
+      packageManager: requiredString(
+        value,
+        "packageManager",
+        `Reference manifest provenance ${name}.packageManager is required.`
+      ),
+      packageVersion: requiredString(
+        value,
+        "packageVersion",
+        `Reference manifest provenance ${name}.packageVersion is required.`
+      ),
+      repository: requiredString(
+        value,
+        "repository",
+        `Reference manifest provenance ${name}.repository is required.`
+      ),
+    };
+  };
+  const t3Code = subject(subjects.t3Code, "t3Code");
+  const openCode = subject(subjects.openCode, "openCode");
+  const piValue = subjects.pi;
+  if (!isRecordValue(piValue))
+    throw new Error("Reference manifest provenance pi is invalid.");
+  return {
+    model: {
+      fixture: requiredString(
+        model,
+        "fixture",
+        "Reference manifest provenance model.fixture is required."
+      ),
+      model: requiredString(
+        model,
+        "model",
+        "Reference manifest provenance model.model is required."
+      ),
+      provider: requiredString(
+        model,
+        "provider",
+        "Reference manifest provenance model.provider is required."
+      ),
+    },
+    runtime: {
+      architecture: requiredString(
+        runtime,
+        "architecture",
+        "Reference manifest provenance runtime.architecture is required."
+      ),
+      nodeVersion: requiredString(
+        runtime,
+        "nodeVersion",
+        "Reference manifest provenance runtime.nodeVersion is required."
+      ),
+      operatingSystem: requiredString(
+        runtime,
+        "operatingSystem",
+        "Reference manifest provenance runtime.operatingSystem is required."
+      ),
+      packageManager: requiredString(
+        runtime,
+        "packageManager",
+        "Reference manifest provenance runtime.packageManager is required."
+      ),
+    },
+    subjects: {
+      openCode,
+      pi: {
+        package: requiredString(
+          piValue,
+          "package",
+          "Reference manifest provenance pi.package is required."
+        ),
+        packageVersion: requiredString(
+          piValue,
+          "packageVersion",
+          "Reference manifest provenance pi.packageVersion is required."
+        ),
+        ...(piValue.repository === undefined
+          ? {}
+          : {
+              repository: requiredString(
+                piValue,
+                "repository",
+                "Reference manifest provenance pi.repository is required."
+              ),
+            }),
+      },
+      t3Code,
+    },
+  };
+}
+
 export function decodeReferenceManifest(value: unknown): ReferenceManifest {
   if (!isRecordValue(value))
     throw new Error("Reference manifest must be an object.");
@@ -126,11 +355,19 @@ export function decodeReferenceManifest(value: unknown): ReferenceManifest {
     throw new Error("Reference manifest generatedAt must be an ISO timestamp.");
   const captureSha256 = readOptionalSha256(value, "captureSha256");
   const scenarioSha256 = readOptionalSha256(value, "scenarioSha256");
+  const provenance =
+    value.provenance === undefined
+      ? undefined
+      : readProvenance(value.provenance);
   if (
     status === "passed" &&
-    (captureSha256 === undefined || scenarioSha256 === undefined)
+    (captureSha256 === undefined ||
+      scenarioSha256 === undefined ||
+      provenance === undefined)
   )
-    throw new Error("Passed reference manifests need artifact checksums.");
+    throw new Error(
+      "Passed reference manifests need checksums and provenance."
+    );
   return {
     ...(captureSha256 === undefined ? {} : { captureSha256 }),
     capturePath: requiredString(
@@ -147,6 +384,7 @@ export function decodeReferenceManifest(value: unknown): ReferenceManifest {
     generatedAt,
     openCodeCommit: readManifestCommit(value, "openCodeCommit"),
     opencodeArgv: readManifestArgv(value, "opencodeArgv"),
+    ...(provenance === undefined ? {} : { provenance }),
     runId: requiredString(
       value,
       "runId",
@@ -209,6 +447,9 @@ export function decodeScenarioReport(value: unknown): ScenarioReport {
         throw new Error(
           `Scenario report entry ${id} operations must be non-empty.`
         );
+      const decodedOperations = operations.map((operation, operationIndex) =>
+        readScenarioOperation(operation, id, operationIndex)
+      );
       const observedEventTypes = scenario.observedEventTypes;
       if (
         !Array.isArray(observedEventTypes) ||
@@ -232,7 +473,7 @@ export function decodeScenarioReport(value: unknown): ScenarioReport {
         failures,
         id,
         observedEventTypes,
-        operations,
+        operations: decodedOperations,
         passed: scenario.passed,
       };
     }),
