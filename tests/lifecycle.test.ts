@@ -78,7 +78,16 @@ describe("prompt and lifecycle facade", () => {
     const history = await handler(
       new Request("http://shim.test/session/thread-tools/message")
     );
-    expect(await history.json()).toHaveLength(2);
+    const historyBody = await history.json();
+    expect(historyBody).toHaveLength(2);
+    const assistantId = historyBody[1].info.id;
+    const lookup = await handler(
+      new Request(
+        `http://shim.test/session/thread-tools/message/${assistantId}`
+      )
+    );
+    expect(lookup.status).toBe(200);
+    expect((await lookup.json()).info.id).toBe(assistantId);
   });
 
   test("accepts asynchronous prompts and reports session status", async () => {
