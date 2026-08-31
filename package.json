@@ -13,6 +13,7 @@
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
     "check": "bun run format:check && bun run lint && bun run typecheck",
+    "contract:inventory": "bun run tools/contract/inventory.ts",
     "prepare": "lefthook install"
   },
   "dependencies": {
