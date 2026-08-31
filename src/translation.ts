@@ -4,8 +4,15 @@ import type {
   ToolResultMessage,
   UserMessage,
 } from "@earendil-works/pi-ai";
+import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 
-import type { FacadeMessage, FacadePart, JsonValue } from "./types.ts";
+import type {
+  FacadeEvent,
+  FacadeMessage,
+  FacadePart,
+  JsonValue,
+  SessionStatus,
+} from "./types.ts";
 
 function textPart(text: string): FacadePart {
   return { text, type: "text" };
@@ -99,4 +106,140 @@ export function translateMessages(
     const translated = translateMessage(sessionId, index, message);
     return translated === null ? [] : [translated];
   });
+}
+
+function sessionEvent(
+  sessionID: string,
+  type: string,
+  properties: FacadeEvent["properties"] = {}
+): FacadeEvent {
+  return { id: crypto.randomUUID(), properties, sessionID, type };
+}
+
+function latestMessage(
+  sessionID: string,
+  messages: readonly AgentMessage[]
+): FacadeMessage | undefined {
+  const translated = translateMessages(sessionID, messages);
+  return translated[translated.length - 1];
+}
+
+function statusEvent(sessionID: string, status: SessionStatus): FacadeEvent {
+  return sessionEvent(sessionID, "session.status", {
+    sessionStatus: status,
+  });
+}
+
+function eventMessageId(
+  sessionID: string,
+  message: AgentMessage,
+  messages: readonly AgentMessage[],
+  messageIds: Map<string, string>
+): string | undefined {
+  if (
+    message.role !== "user" &&
+    message.role !== "assistant" &&
+    message.role !== "toolResult"
+  ) {
+    return undefined;
+  }
+  const key = `${message.role}:${message.timestamp}`;
+  const known = messageIds.get(key);
+  if (known !== undefined) return known;
+  const index = messages.indexOf(message);
+  const id = `${sessionID}-message-${index < 0 ? messages.length + 1 : index + 1}`;
+  messageIds.set(key, id);
+  return id;
+}
+
+export function translateAgentEvent(
+  sessionID: string,
+  event: AgentSessionEvent,
+  messages: readonly AgentMessage[],
+  messageIds: Map<string, string> = new Map()
+): readonly FacadeEvent[] {
+  switch (event.type) {
+    case "agent_start":
+      return [statusEvent(sessionID, "running")];
+    case "agent_settled":
+      return [statusEvent(sessionID, "idle")];
+    case "agent_end":
+      return [statusEvent(sessionID, event.willRetry ? "running" : "idle")];
+    case "message_update": {
+      const update = event.assistantMessageEvent;
+      if (
+        update.type !== "text_delta" &&
+        update.type !== "thinking_delta" &&
+        update.type !== "toolcall_delta"
+      ) {
+        return [];
+      }
+      return [
+        sessionEvent(sessionID, "message.part.updated", {
+          delta: update.delta,
+          messageId: eventMessageId(
+            sessionID,
+            event.message,
+            messages,
+            messageIds
+          ),
+        }),
+      ];
+    }
+    case "message_end": {
+      const message = latestMessage(sessionID, messages);
+      const messageId = eventMessageId(
+        sessionID,
+        event.message,
+        messages,
+        messageIds
+      );
+      return message === undefined
+        ? []
+        : [
+            sessionEvent(sessionID, "message.completed", {
+              message:
+                messageId === undefined
+                  ? message
+                  : { ...message, id: messageId },
+              messageId: messageId ?? message.id,
+            }),
+          ];
+    }
+    case "tool_execution_start":
+      return [
+        sessionEvent(sessionID, "tool.started", {
+          toolCallId: event.toolCallId,
+          toolName: event.toolName,
+        }),
+      ];
+    case "tool_execution_end":
+      return [
+        sessionEvent(sessionID, "tool.completed", {
+          isError: event.isError,
+          toolCallId: event.toolCallId,
+          toolName: event.toolName,
+        }),
+      ];
+    case "turn_end": {
+      const message = latestMessage(sessionID, messages);
+      const messageId = eventMessageId(
+        sessionID,
+        event.message,
+        messages,
+        messageIds
+      );
+      return [
+        sessionEvent(sessionID, "turn.completed", {
+          message:
+            messageId === undefined || message === undefined
+              ? message
+              : { ...message, id: messageId },
+          messageId: messageId ?? message?.id,
+        }),
+      ];
+    }
+    default:
+      return [];
+  }
 }

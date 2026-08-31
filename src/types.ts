@@ -80,6 +80,26 @@ export interface SessionSnapshot {
   };
 }
 
+export interface EventProperties {
+  readonly delta?: string;
+  readonly error?: string;
+  readonly isError?: boolean;
+  readonly message?: FacadeMessage;
+  readonly messageId?: string;
+  readonly sessionStatus?: SessionStatus;
+  readonly toolCallId?: string;
+  readonly toolName?: string;
+}
+
+export interface FacadeEvent {
+  readonly id: string;
+  readonly properties: EventProperties;
+  readonly sessionID: string;
+  readonly type: string;
+}
+
+export type SessionEventSink = (event: FacadeEvent) => void;
+
 export interface ErrorResponse {
   readonly error: {
     readonly code: string;

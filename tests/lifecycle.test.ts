@@ -1,0 +1,154 @@
+import { describe, expect, test } from "bun:test";
+
+import { EventHub } from "../src/events.ts";
+import { createHandler } from "../src/server.ts";
+import { InMemorySessionBackend, SessionRegistry } from "../src/sessions.ts";
+import type { ShimConfig } from "../src/types.ts";
+
+const config: ShimConfig = {
+  agentDir: undefined,
+  cwd: "/tmp/poc",
+  host: "127.0.0.1",
+  modelId: "test-model",
+  port: 4096,
+  providerId: "pi",
+  sessionDir: undefined,
+  version: "test",
+};
+
+function createTestHandler() {
+  const events = new EventHub();
+  const registry = new SessionRegistry(new InMemorySessionBackend());
+  return { events, handler: createHandler(config, registry, events), registry };
+}
+
+async function createSession(
+  handler: ReturnType<typeof createHandler>,
+  id: string
+): Promise<void> {
+  const response = await handler(
+    new Request("http://shim.test/session", {
+      body: JSON.stringify({ id }),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    })
+  );
+  expect(response.status).toBe(201);
+}
+
+function promptRequest(id: string, text: string): Request {
+  return new Request(`http://shim.test/session/${id}/message`, {
+    body: JSON.stringify({ parts: [{ text, type: "text" }] }),
+    headers: { "content-type": "application/json" },
+    method: "POST",
+  });
+}
+
+describe("prompt and lifecycle facade", () => {
+  test("streams scoped SSE events and retains a tool result", async () => {
+    const { handler } = createTestHandler();
+    await createSession(handler, "thread-tools");
+
+    const stream = await handler(new Request("http://shim.test/global/event"));
+    const reader = stream.body?.getReader();
+    expect(reader).not.toBeUndefined();
+    const decoder = new TextDecoder();
+    const connected = await reader?.read();
+    expect(decoder.decode(connected?.value)).toContain(": connected");
+
+    const prompt = handler(promptRequest("thread-tools", "tool: list_files"));
+    let frames = "";
+    for (
+      let index = 0;
+      index < 20 && !frames.includes("tool.completed");
+      index += 1
+    ) {
+      const chunk = await reader?.read();
+      if (chunk?.done === true) break;
+      frames += decoder.decode(chunk?.value);
+    }
+    const completed = await prompt;
+    await reader?.cancel();
+
+    expect(completed.status).toBe(200);
+    expect(frames).toContain('"sessionID":"thread-tools"');
+    expect(frames).toContain("tool.started");
+    expect(frames).toContain("tool.completed");
+    expect((await completed.json()).messages).toHaveLength(3);
+  });
+
+  test("aborts an active turn without adding an assistant message", async () => {
+    const { handler, registry } = createTestHandler();
+    await createSession(handler, "thread-abort");
+
+    const session = await registry.getSession("thread-abort");
+    if (session === null) throw new Error("test session was not created");
+    const prompt = session.prompt("long response", () => undefined);
+    await Promise.resolve();
+    const abort = handler(
+      new Request("http://shim.test/session/thread-abort/abort", {
+        method: "POST",
+      })
+    );
+    const [promptSnapshot, abortResponse] = await Promise.all([prompt, abort]);
+
+    expect(abortResponse.status).toBe(200);
+    expect((await abortResponse.json()).status).toBe("aborted");
+    expect(promptSnapshot.messages).toHaveLength(1);
+  });
+
+  test("reverts a completed turn and continues from the resulting state", async () => {
+    const { handler } = createTestHandler();
+    await createSession(handler, "thread-revert");
+    await handler(promptRequest("thread-revert", "first"));
+
+    const before = await handler(
+      new Request("http://shim.test/session/thread-revert")
+    );
+    const beforeBody = await before.json();
+    const target = beforeBody.messages[1].id;
+    const reverted = await handler(
+      new Request("http://shim.test/session/thread-revert/revert", {
+        body: JSON.stringify({ messageID: target }),
+        headers: { "content-type": "application/json" },
+        method: "POST",
+      })
+    );
+
+    expect(reverted.status).toBe(200);
+    expect((await reverted.json()).messages).toHaveLength(1);
+    await handler(promptRequest("thread-revert", "second"));
+    const continued = await handler(
+      new Request("http://shim.test/session/thread-revert/message")
+    );
+    const messages = await continued.json();
+    expect(messages).toHaveLength(3);
+    expect(messages[2].parts[0].text).toBe("Echo: second");
+  });
+
+  test("keeps concurrent session events isolated", async () => {
+    const { events, registry } = createTestHandler();
+    const handler = createHandler(config, registry, events);
+    await createSession(handler, "thread-a");
+    await createSession(handler, "thread-b");
+    const seen: string[] = [];
+    const unsubscribe = events.subscribe((event) => seen.push(event.sessionID));
+
+    await Promise.all([
+      registry.promptSession("thread-a", "alpha", (event) =>
+        events.publish(event)
+      ),
+      registry.promptSession("thread-b", "beta", (event) =>
+        events.publish(event)
+      ),
+    ]);
+    unsubscribe();
+
+    expect(new Set(seen)).toEqual(new Set(["thread-a", "thread-b"]));
+    expect(
+      seen.every(
+        (sessionId) => sessionId === "thread-a" || sessionId === "thread-b"
+      )
+    ).toBe(true);
+  });
+});

@@ -1,5 +1,7 @@
 # Pi–OpenCode Shim POC
 
+See [`docs/poc.md`](docs/poc.md) for the provisional facade surface and known capture gaps.
+
 Small Bun service exposing the OpenCode-shaped surface needed by the documented T3 integration, backed by Pi sessions.
 
 ## Commands
@@ -8,6 +10,7 @@ Small Bun service exposing the OpenCode-shaped surface needed by the documented 
 bun install
 bun run check
 bun test
+bun run build
 bun run dev
 ```
 

@@ -2,11 +2,18 @@ import {
   createAgentSession,
   SessionManager,
   type AgentSession,
+  type AgentSessionEvent,
   type CreateAgentSessionOptions,
 } from "@earendil-works/pi-coding-agent";
 
-import { translateMessages } from "./translation.ts";
-import type { SessionSnapshot, SessionStatus, ShimConfig } from "./types.ts";
+import { translateAgentEvent, translateMessages } from "./translation.ts";
+import type {
+  FacadeMessage,
+  SessionEventSink,
+  SessionSnapshot,
+  SessionStatus,
+  ShimConfig,
+} from "./types.ts";
 
 export interface CreateSessionInput {
   readonly cwd: string;
@@ -16,7 +23,9 @@ export interface CreateSessionInput {
 export interface BackendSession {
   readonly id: string;
   snapshot(): SessionSnapshot;
+  prompt(text: string, emit: SessionEventSink): Promise<SessionSnapshot>;
   abort(): Promise<void>;
+  revert(messageId: string): Promise<SessionSnapshot | null>;
   dispose(): void;
 }
 
@@ -32,6 +41,10 @@ function now(): number {
 
 class MemoryBackendSession implements BackendSession {
   private readonly created: number;
+  private readonly messages: FacadeMessage[] = [];
+  private activeEmit: SessionEventSink | undefined;
+  private abortRequested = false;
+  private promptTail: Promise<void> = Promise.resolve();
   private status: SessionStatus = "idle";
   private updated: number;
 
@@ -47,18 +60,192 @@ class MemoryBackendSession implements BackendSession {
     return {
       cwd: this.cwd,
       id: this.id,
-      messages: [],
+      messages: [...this.messages],
       status: this.status,
       time: { created: this.created, updated: this.updated },
     };
   }
 
-  async abort(): Promise<void> {
-    this.status = "aborted";
-    this.updated = now();
+  prompt(text: string, emit: SessionEventSink): Promise<SessionSnapshot> {
+    const operation = this.promptTail.then(() => this.runPrompt(text, emit));
+    this.promptTail = operation.then(
+      () => undefined,
+      () => undefined
+    );
+    return operation;
   }
 
-  dispose(): void {}
+  private async runPrompt(
+    text: string,
+    emit: SessionEventSink
+  ): Promise<SessionSnapshot> {
+    if (this.abortRequested) {
+      this.abortRequested = false;
+      this.status = "aborted";
+      this.activeEmit = emit;
+      emitStatus(this.id, this.status, emit);
+      this.activeEmit = undefined;
+      return this.snapshot();
+    }
+    this.status = "running";
+    this.activeEmit = emit;
+    this.updated = now();
+    emitStatus(this.id, this.status, emit);
+
+    const user: FacadeMessage = {
+      id: `${this.id}-message-${this.messages.length + 1}`,
+      parts: [{ text, type: "text" }],
+      role: "user",
+      time: { created: now() },
+    };
+    this.messages.push(user);
+    emitMessage(this.id, "message.created", user, emit);
+
+    if (text.startsWith("tool:")) {
+      const toolName = text.slice("tool:".length).trim() || "demo_tool";
+      const toolCallId = `${this.id}-tool-${this.messages.length}`;
+      const assistant: FacadeMessage = {
+        id: `${this.id}-message-${this.messages.length + 1}`,
+        parts: [
+          {
+            id: toolCallId,
+            input: { value: toolName },
+            name: toolName,
+            type: "tool-call",
+          },
+        ],
+        role: "assistant",
+        time: { completed: now(), created: now() },
+      };
+      this.messages.push(assistant);
+      emitMessage(this.id, "message.completed", assistant, emit);
+      emit({
+        id: crypto.randomUUID(),
+        properties: { toolCallId, toolName },
+        sessionID: this.id,
+        type: "tool.started",
+      });
+      await Promise.resolve();
+      if (this.wasAborted()) return this.snapshot();
+      const result: FacadeMessage = {
+        id: `${this.id}-message-${this.messages.length + 1}`,
+        parts: [
+          {
+            error: false,
+            text: `${toolName} ok`,
+            toolCallId,
+            type: "tool-result",
+          },
+        ],
+        role: "tool",
+        time: { completed: now(), created: now() },
+      };
+      this.messages.push(result);
+      emitMessage(this.id, "message.completed", result, emit);
+      emit({
+        id: crypto.randomUUID(),
+        properties: { isError: false, toolCallId, toolName },
+        sessionID: this.id,
+        type: "tool.completed",
+      });
+      this.status = "idle";
+      this.updated = now();
+      emitStatus(this.id, this.status, emit);
+      return this.snapshot();
+    }
+
+    let partial = "";
+    for (const delta of ["Echo: ", text]) {
+      await Promise.resolve();
+      if (this.wasAborted()) return this.snapshot();
+      partial += delta;
+      emit({
+        id: crypto.randomUUID(),
+        properties: {
+          delta,
+          messageId: `${this.id}-message-${this.messages.length + 1}`,
+        },
+        sessionID: this.id,
+        type: "message.part.updated",
+      });
+    }
+
+    const assistant: FacadeMessage = {
+      id: `${this.id}-message-${this.messages.length + 1}`,
+      parts: [{ text: partial, type: "text" }],
+      role: "assistant",
+      time: { completed: now(), created: now() },
+    };
+    this.messages.push(assistant);
+    emitMessage(this.id, "message.completed", assistant, emit);
+    this.status = "idle";
+    this.updated = now();
+    emitStatus(this.id, this.status, emit);
+    return this.snapshot();
+  }
+
+  private wasAborted(): boolean {
+    return this.status === "aborted";
+  }
+
+  async abort(): Promise<void> {
+    if (this.status !== "running") {
+      this.abortRequested = true;
+      this.status = "aborted";
+      this.updated = now();
+      return;
+    }
+    this.status = "aborted";
+    this.updated = now();
+    this.activeEmit?.({
+      id: crypto.randomUUID(),
+      properties: { sessionStatus: this.status },
+      sessionID: this.id,
+      type: "session.status",
+    });
+  }
+
+  async revert(messageId: string): Promise<SessionSnapshot | null> {
+    const index = this.messages.findIndex(
+      (message) => message.id === messageId
+    );
+    if (index < 0) return null;
+    this.messages.splice(index);
+    this.status = "idle";
+    this.updated = now();
+    return this.snapshot();
+  }
+
+  dispose(): void {
+    this.activeEmit = undefined;
+  }
+}
+
+function emitStatus(
+  id: string,
+  status: SessionStatus,
+  emit: SessionEventSink
+): void {
+  emit({
+    id: crypto.randomUUID(),
+    properties: { sessionStatus: status },
+    sessionID: id,
+    type: "session.status",
+  });
+}
+
+function emitMessage(
+  id: string,
+  type: string,
+  message: FacadeMessage,
+  emit: SessionEventSink
+): void {
+  emit({
+    id: crypto.randomUUID(),
+    properties: { message, messageId: message.id },
+    sessionID: id,
+    type,
+  });
 }
 
 export class InMemorySessionBackend implements SessionBackend {
@@ -80,14 +267,20 @@ export class InMemorySessionBackend implements SessionBackend {
 }
 
 class PiBackendSession implements BackendSession {
-  private readonly created = now();
+  private readonly created: number;
+  private activeEmit: SessionEventSink | undefined;
+  private abortRequested = false;
+  private promptTail: Promise<void> = Promise.resolve();
   private status: SessionStatus = "idle";
 
   constructor(
     public readonly id: string,
     private readonly session: AgentSession,
     private readonly cwd: string
-  ) {}
+  ) {
+    const header = session.sessionManager.getHeader();
+    this.created = header === null ? now() : Date.parse(header.timestamp);
+  }
 
   snapshot(): SessionSnapshot {
     return {
@@ -99,9 +292,94 @@ class PiBackendSession implements BackendSession {
     };
   }
 
+  prompt(text: string, emit: SessionEventSink): Promise<SessionSnapshot> {
+    const operation = this.promptTail.then(() => this.runPrompt(text, emit));
+    this.promptTail = operation.then(
+      () => undefined,
+      () => undefined
+    );
+    return operation;
+  }
+
+  private async runPrompt(
+    text: string,
+    emit: SessionEventSink
+  ): Promise<SessionSnapshot> {
+    if (this.abortRequested) {
+      this.abortRequested = false;
+      this.status = "aborted";
+      this.activeEmit = emit;
+      emitStatus(this.id, this.status, emit);
+      this.activeEmit = undefined;
+      return this.snapshot();
+    }
+    this.status = "running";
+    this.activeEmit = emit;
+    emitStatus(this.id, this.status, emit);
+    const messageIds = new Map<string, string>();
+    const unsubscribe = this.session.subscribe((event: AgentSessionEvent) => {
+      for (const translated of translateAgentEvent(
+        this.id,
+        event,
+        this.session.messages,
+        messageIds
+      )) {
+        emit(translated);
+      }
+    });
+    try {
+      await this.session.prompt(text);
+      if (!this.wasAborted()) this.status = "idle";
+      emitStatus(this.id, this.status, emit);
+      return this.snapshot();
+    } catch (error) {
+      this.status = this.wasAborted() ? "aborted" : "error";
+      emit({
+        id: crypto.randomUUID(),
+        properties: {
+          error: error instanceof Error ? error.message : "Pi prompt failed.",
+          sessionStatus: this.status,
+        },
+        sessionID: this.id,
+        type: "session.error",
+      });
+      throw error;
+    } finally {
+      unsubscribe();
+      if (this.activeEmit === emit) this.activeEmit = undefined;
+    }
+  }
+
+  private wasAborted(): boolean {
+    return this.status === "aborted";
+  }
+
   async abort(): Promise<void> {
+    if (!this.session.isStreaming) {
+      this.abortRequested = true;
+      this.status = "aborted";
+      if (this.activeEmit !== undefined)
+        emitStatus(this.id, this.status, this.activeEmit);
+      return;
+    }
     await this.session.abort();
     this.status = "aborted";
+    if (this.activeEmit !== undefined)
+      emitStatus(this.id, this.status, this.activeEmit);
+  }
+
+  async revert(messageId: string): Promise<SessionSnapshot | null> {
+    const match = /-message-(\d+)$/u.exec(messageId);
+    const ordinal = match === null ? Number.NaN : Number(match[1]);
+    if (!Number.isInteger(ordinal) || ordinal < 1) return null;
+    const messageEntries = this.session.sessionManager
+      .getBranch()
+      .filter((entry) => entry.type === "message");
+    const target = messageEntries[ordinal - 1];
+    if (target === undefined) return null;
+    await this.session.navigateTree(target.parentId ?? target.id);
+    this.status = "idle";
+    return this.snapshot();
   }
 
   dispose(): void {
@@ -130,7 +408,9 @@ export class PiSessionBackend implements SessionBackend {
     const manager = SessionManager.create(input.cwd, this.config.sessionDir, {
       id: input.id,
     });
-    return this.createPiSession(input, manager);
+    const session = await this.createPiSession(input, manager);
+    manager.appendCustomEntry("pi-opencode-shim", { facadeId: input.id });
+    return session;
   }
 
   async listSessions(): Promise<readonly SessionSnapshot[]> {
@@ -188,6 +468,30 @@ export class SessionRegistry {
   async getSnapshot(id: string): Promise<SessionSnapshot | null> {
     const session = await this.getSession(id);
     return session?.snapshot() ?? null;
+  }
+
+  async promptSession(
+    id: string,
+    text: string,
+    emit: SessionEventSink
+  ): Promise<SessionSnapshot | null> {
+    const session = await this.getSession(id);
+    return session === null ? null : session.prompt(text, emit);
+  }
+
+  async abortSession(id: string): Promise<SessionSnapshot | null> {
+    const session = await this.getSession(id);
+    if (session === null) return null;
+    await session.abort();
+    return session.snapshot();
+  }
+
+  async revertSession(
+    id: string,
+    messageId: string
+  ): Promise<SessionSnapshot | null> {
+    const session = await this.getSession(id);
+    return session === null ? null : session.revert(messageId);
   }
 
   async listSessions(): Promise<readonly SessionSnapshot[]> {

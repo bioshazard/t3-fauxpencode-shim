@@ -1,6 +1,11 @@
 import { loadConfig } from "./config.ts";
 import { contractError } from "./contract.ts";
-import { readCreateSessionRequest } from "./request.ts";
+import { EventHub } from "./events.ts";
+import {
+  readCreateSessionRequest,
+  readPromptRequest,
+  readRevertRequest,
+} from "./request.ts";
 import {
   InMemorySessionBackend,
   PiSessionBackend,
@@ -45,9 +50,10 @@ function methodNotAllowed(request: Request): Response {
 
 export function createHandler(
   config: ShimConfig,
-  sessions = new SessionRegistry(new InMemorySessionBackend())
+  sessions = new SessionRegistry(new InMemorySessionBackend()),
+  events = new EventHub()
 ): (request: Request) => Response | Promise<Response> {
-  return createSessionHandler(config, sessions);
+  return createSessionHandler(config, sessions, events);
 }
 
 function notFound(): Response {
@@ -59,7 +65,8 @@ function notFound(): Response {
 
 function createSessionHandler(
   config: ShimConfig,
-  sessions: SessionRegistry
+  sessions: SessionRegistry,
+  events: EventHub
 ): (request: Request) => Response | Promise<Response> {
   return (request) => {
     const url = new URL(request.url);
@@ -81,6 +88,11 @@ function createSessionHandler(
         name: "Pi",
       };
       return jsonResponse({ default: provider.id, providers: [provider] });
+    }
+
+    if (url.pathname === "/global/event" || url.pathname === "/event") {
+      if (request.method !== "GET") return methodNotAllowed(request);
+      return events.response();
     }
 
     if (url.pathname === "/session" && request.method === "POST") {
@@ -114,14 +126,74 @@ function createSessionHandler(
 
     if (url.pathname === "/session") return methodNotAllowed(request);
 
-    const sessionPath = /^\/session\/([^/]+)(\/message)?$/u.exec(url.pathname);
+    const sessionPath =
+      /^\/session\/([^/]+)(\/message|\/prompt|\/abort|\/revert|\/event)?$/u.exec(
+        url.pathname
+      );
     if (sessionPath !== null) {
       const sessionId = decodeURIComponent(sessionPath[1] ?? "");
+      const operation = sessionPath[2];
+      if (request.method === "GET" && operation === "/event") {
+        return events.response(sessionId);
+      }
+      if (
+        request.method === "POST" &&
+        (operation === "/message" || operation === "/prompt")
+      ) {
+        return readPromptRequest(request).then(async (parsed) => {
+          if (parsed.kind === "error") {
+            return jsonResponse(
+              contractError("invalid_request", parsed.message),
+              400
+            );
+          }
+          try {
+            const snapshot = await sessions.promptSession(
+              sessionId,
+              parsed.text,
+              (event) => events.publish(event)
+            );
+            return snapshot === null ? notFound() : jsonResponse(snapshot);
+          } catch (error) {
+            const message =
+              error instanceof Error ? error.message : "Pi prompt failed.";
+            return jsonResponse(contractError("session_failed", message), 500);
+          }
+        });
+      }
+      if (request.method === "POST" && operation === "/abort") {
+        return sessions
+          .abortSession(sessionId)
+          .then((snapshot) =>
+            snapshot === null ? notFound() : jsonResponse(snapshot)
+          );
+      }
+      if (request.method === "POST" && operation === "/revert") {
+        return readRevertRequest(request).then(async (parsed) => {
+          if (parsed.kind === "error") {
+            return jsonResponse(
+              contractError("invalid_request", parsed.message),
+              400
+            );
+          }
+          try {
+            const snapshot = await sessions.revertSession(
+              sessionId,
+              parsed.messageId
+            );
+            return snapshot === null ? notFound() : jsonResponse(snapshot);
+          } catch (error) {
+            const message =
+              error instanceof Error ? error.message : "Session revert failed.";
+            return jsonResponse(contractError("session_failed", message), 500);
+          }
+        });
+      }
       if (request.method !== "GET") return methodNotAllowed(request);
       return sessions.getSnapshot(sessionId).then((snapshot) => {
         if (snapshot === null) return notFound();
         return jsonResponse(
-          sessionPath[2] === "/message" ? snapshot.messages : snapshot
+          operation === "/message" ? snapshot.messages : snapshot
         );
       });
     }
@@ -140,8 +212,9 @@ export function runServer(
   config: ShimConfig = loadConfig()
 ): Bun.Server<undefined> {
   const sessions = new SessionRegistry(new PiSessionBackend(config));
+  const events = new EventHub();
   const server = Bun.serve({
-    fetch: createSessionHandler(config, sessions),
+    fetch: createSessionHandler(config, sessions, events),
     hostname: config.host,
     port: config.port,
   });
