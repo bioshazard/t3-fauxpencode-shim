@@ -122,6 +122,7 @@ export interface SessionSnapshot {
   readonly id: string;
   readonly cwd: string;
   readonly messages: readonly FacadeMessage[];
+  readonly permission: readonly JsonValue[];
   readonly title: string;
   readonly status: SessionStatus;
   readonly time: {

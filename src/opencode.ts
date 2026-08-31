@@ -77,7 +77,7 @@ export function sessionResponse(
     directory: snapshot.cwd,
     id: snapshot.id,
     model: { id: config.modelId, providerID: config.providerId },
-    permission: [],
+    permission: snapshot.permission,
     projectID: snapshot.cwd,
     slug: snapshot.id,
     time: snapshot.time,

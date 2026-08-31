@@ -9,6 +9,7 @@ import {
 import { translateAgentEvent, translateMessages } from "./translation.ts";
 import type {
   FacadeMessage,
+  JsonValue,
   PromptInput,
   SessionEventSink,
   SessionSnapshot,
@@ -19,6 +20,7 @@ import type {
 export interface CreateSessionInput {
   readonly cwd: string;
   readonly id: string;
+  readonly permission?: readonly JsonValue[];
   readonly title?: string;
 }
 
@@ -62,7 +64,8 @@ class MemoryBackendSession implements BackendSession {
   constructor(
     public readonly id: string,
     private readonly cwd: string,
-    private readonly title: string
+    private readonly title: string,
+    private readonly permission: readonly JsonValue[]
   ) {
     this.created = now();
     this.updated = this.created;
@@ -73,6 +76,7 @@ class MemoryBackendSession implements BackendSession {
       cwd: this.cwd,
       id: this.id,
       messages: [...this.messages],
+      permission: [...this.permission],
       status: this.status,
       title: this.title,
       time: { created: this.created, updated: this.updated },
@@ -274,7 +278,8 @@ export class InMemorySessionBackend implements SessionBackend {
     const session = new MemoryBackendSession(
       input.id,
       input.cwd,
-      input.title ?? `Pi session ${input.id}`
+      input.title ?? `Pi session ${input.id}`,
+      input.permission ?? []
     );
     this.sessions.set(input.id, session);
     return session;
@@ -300,7 +305,8 @@ class PiBackendSession implements BackendSession {
     public readonly id: string,
     private readonly session: AgentSession,
     private readonly cwd: string,
-    private readonly title: string
+    private readonly title: string,
+    private readonly permission: readonly JsonValue[]
   ) {
     const header = session.sessionManager.getHeader();
     this.created = header === null ? now() : Date.parse(header.timestamp);
@@ -311,6 +317,7 @@ class PiBackendSession implements BackendSession {
       cwd: this.cwd,
       id: this.id,
       messages: translateMessages(this.id, this.session.messages),
+      permission: [...this.permission],
       status: this.session.isStreaming ? "running" : this.status,
       title: this.title,
       time: { created: this.created, updated: now() },
@@ -454,7 +461,8 @@ export class PiSessionBackend implements SessionBackend {
       input.id,
       result.session,
       input.cwd,
-      input.title ?? `Pi session ${input.id}`
+      input.title ?? `Pi session ${input.id}`,
+      input.permission ?? []
     );
   }
 
@@ -473,6 +481,7 @@ export class PiSessionBackend implements SessionBackend {
       cwd: session.cwd,
       id: session.id,
       messages: [],
+      permission: [],
       status: "idle",
       title: `Pi session ${session.id}`,
       time: {
@@ -492,7 +501,12 @@ export class PiSessionBackend implements SessionBackend {
       info.cwd
     );
     return this.createPiSession(
-      { cwd: info.cwd, id: info.id, title: `Pi session ${info.id}` },
+      {
+        cwd: info.cwd,
+        id: info.id,
+        permission: [],
+        title: `Pi session ${info.id}`,
+      },
       manager
     );
   }
@@ -513,6 +527,9 @@ export class SessionRegistry {
     const session = await this.backend.createSession({
       cwd: input.cwd,
       id,
+      ...(input.permission === undefined
+        ? {}
+        : { permission: input.permission }),
       ...(input.title === undefined ? {} : { title: input.title }),
     });
     this.active.set(id, session);

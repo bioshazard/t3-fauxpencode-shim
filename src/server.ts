@@ -10,6 +10,7 @@ import {
   readCreateSessionRequest,
   readPromptRequest,
   readRevertRequest,
+  readSessionUpdateRequest,
 } from "./request.ts";
 import {
   InMemorySessionBackend,
@@ -160,6 +161,22 @@ function createSessionHandler(
     }
 
     if (url.pathname === "/session") return methodNotAllowed(request);
+
+    const sessionUpdatePath = /^\/session\/([^/]+)$/u.exec(url.pathname);
+    if (sessionUpdatePath !== null && request.method === "PATCH") {
+      const sessionId = decodeURIComponent(sessionUpdatePath[1] ?? "");
+      return readSessionUpdateRequest(request).then(async (parsed) => {
+        if (parsed.kind === "error")
+          return jsonResponse(
+            contractError("invalid_request", parsed.message),
+            400
+          );
+        const snapshot = await sessions.getSnapshot(sessionId);
+        return snapshot === null
+          ? notFound()
+          : jsonResponse(sessionResponse(snapshot, config));
+      });
+    }
 
     const sessionPath =
       /^\/session\/([^/]+)(\/message|\/prompt|\/prompt_async|\/abort|\/revert|\/event)?$/u.exec(

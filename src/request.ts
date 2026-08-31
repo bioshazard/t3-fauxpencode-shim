@@ -18,6 +18,10 @@ export type RevertRequest =
   | { readonly kind: "error"; readonly message: string }
   | { readonly kind: "ok"; readonly messageId: string };
 
+export type SessionUpdateRequest =
+  | { readonly kind: "error"; readonly message: string }
+  | { readonly kind: "ok"; readonly permission?: readonly JsonValue[] };
+
 function asObject(value: JsonValue): JsonObject | null {
   if (value === null || Array.isArray(value)) return null;
   return Object.prototype.toString.call(value) === "[object Object]"
@@ -81,16 +85,24 @@ export async function readCreateSessionRequest(
   const cwd = readString(record, "cwd");
   const id = readString(record, "id");
   const title = readString(record, "title");
-  if (cwd === null || id === null || title === null) {
+  const permission = record.permission;
+  if (
+    cwd === null ||
+    id === null ||
+    title === null ||
+    (permission !== undefined && !Array.isArray(permission))
+  ) {
     return {
       kind: "error",
-      message: "`cwd`, `id`, and `title` must be strings when provided.",
+      message:
+        "`cwd`, `id`, and `title` must be strings; `permission` must be an array when provided.",
     };
   }
   return {
     input: {
       ...(cwd === undefined ? { cwd: fallbackCwd } : { cwd }),
       ...(id === undefined ? {} : { id }),
+      ...(permission === undefined ? {} : { permission }),
       ...(title === undefined ? {} : { title }),
     },
     kind: "ok",
@@ -247,4 +259,27 @@ export async function readRevertRequest(
   return messageId === undefined || messageId === null
     ? { kind: "error", message: "Revert body needs `messageID`." }
     : { kind: "ok", messageId };
+}
+
+export async function readSessionUpdateRequest(
+  request: Request
+): Promise<SessionUpdateRequest> {
+  const body = await request.text();
+  if (body.trim().length === 0) return { kind: "ok" };
+  let parsed: JsonValue;
+  try {
+    parsed = JSON.parse(body) as JsonValue;
+  } catch {
+    return { kind: "error", message: "Request body must be valid JSON." };
+  }
+  const record = asObject(parsed);
+  if (record === null)
+    return { kind: "error", message: "Request body must be a JSON object." };
+  const permission = record.permission;
+  if (permission !== undefined && !Array.isArray(permission))
+    return {
+      kind: "error",
+      message: "`permission` must be an array when provided.",
+    };
+  return { kind: "ok", ...(permission === undefined ? {} : { permission }) };
 }
