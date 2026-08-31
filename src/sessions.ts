@@ -7,7 +7,11 @@ import {
   type CreateAgentSessionOptions,
 } from "@earendil-works/pi-coding-agent";
 
-import { translateAgentEvent, translateMessages } from "./translation.ts";
+import {
+  translateAgentEvent,
+  translateMessages,
+  type TranslationIdentity,
+} from "./translation.ts";
 import type {
   FacadeMessage,
   JsonValue,
@@ -52,6 +56,25 @@ function normalizePromptInput(input: PromptInput | string): PromptInput {
   return Object.prototype.toString.call(input) === "[object String]"
     ? { images: [], text: String(input) }
     : (input as PromptInput);
+}
+
+const MESSAGE_ID_ENTRY_TYPE = "pi-opencode-shim-message-id";
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (value === null || Array.isArray(value)) return null;
+  return Object.prototype.toString.call(value) === "[object Object]"
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function readStringField(
+  record: Record<string, unknown>,
+  key: string
+): string | null {
+  const value = record[key];
+  return Object.prototype.toString.call(value) === "[object String]"
+    ? String(value)
+    : null;
 }
 
 class MemoryBackendSession implements BackendSession {
@@ -257,7 +280,10 @@ function emitStatus(
 ): void {
   emit({
     id: crypto.randomUUID(),
-    properties: { sessionStatus: status },
+    properties: {
+      sessionStatus: status,
+      status: { type: status === "running" ? "busy" : "idle" },
+    },
     sessionID: id,
     type: "session.status",
   });
@@ -303,6 +329,7 @@ export class InMemorySessionBackend implements SessionBackend {
 class PiBackendSession implements BackendSession {
   private readonly created: number;
   private readonly messageIdOverrides = new Map<AgentMessage, string>();
+  private readonly persistedMessageEntryIds = new Set<string>();
   private activeEmit: SessionEventSink | undefined;
   private abortRequested = false;
   private promptTail: Promise<void> = Promise.resolve();
@@ -313,10 +340,48 @@ class PiBackendSession implements BackendSession {
     private readonly session: AgentSession,
     private readonly cwd: string,
     private readonly title: string,
-    private permission: readonly JsonValue[]
+    private permission: readonly JsonValue[],
+    private readonly identity: TranslationIdentity
   ) {
     const header = session.sessionManager.getHeader();
     this.created = header === null ? now() : Date.parse(header.timestamp);
+    this.restoreMessageIdOverrides();
+  }
+
+  private restoreMessageIdOverrides(): void {
+    const manager = this.session.sessionManager;
+    for (const entry of manager.getEntries()) {
+      if (entry.type !== "custom" || entry.customType !== MESSAGE_ID_ENTRY_TYPE)
+        continue;
+      const data = asRecord(entry.data);
+      if (data === null) {
+        continue;
+      }
+      const messageEntryId = readStringField(data, "messageEntryId");
+      const facadeId = readStringField(data, "facadeId");
+      if (messageEntryId === null || facadeId === null) continue;
+      const messageEntry = manager.getEntry(messageEntryId);
+      if (messageEntry?.type !== "message") continue;
+      const message = this.session.messages.find(
+        (candidate) =>
+          candidate === messageEntry.message ||
+          (candidate.role === messageEntry.message.role &&
+            candidate.timestamp === messageEntry.message.timestamp)
+      );
+      if (message !== undefined) {
+        this.messageIdOverrides.set(message, facadeId);
+        this.persistedMessageEntryIds.add(messageEntryId);
+      }
+    }
+  }
+
+  private currentIdentity(): TranslationIdentity {
+    const model = this.session.model;
+    return {
+      agent: this.identity.agent,
+      modelId: model?.id ?? this.identity.modelId,
+      providerId: model?.provider ?? this.identity.providerId,
+    };
   }
 
   snapshot(): SessionSnapshot {
@@ -368,8 +433,27 @@ class PiBackendSession implements BackendSession {
     const rememberPromptMessage = (): void => {
       if (input.messageId === undefined) return;
       const message = this.session.messages[promptMessageIndex];
-      if (message?.role === "user")
-        this.messageIdOverrides.set(message, input.messageId);
+      if (message?.role !== "user") return;
+      this.messageIdOverrides.set(message, input.messageId);
+      const messageEntry = this.session.sessionManager
+        .getEntries()
+        .find(
+          (entry) =>
+            entry.type === "message" &&
+            (entry.message === message ||
+              (entry.message.role === message.role &&
+                entry.message.timestamp === message.timestamp))
+        );
+      if (
+        messageEntry !== undefined &&
+        !this.persistedMessageEntryIds.has(messageEntry.id)
+      ) {
+        this.session.sessionManager.appendCustomEntry(MESSAGE_ID_ENTRY_TYPE, {
+          facadeId: input.messageId,
+          messageEntryId: messageEntry.id,
+        });
+        this.persistedMessageEntryIds.add(messageEntry.id);
+      }
     };
     emitStatus(this.id, this.status, emit);
     const messageIds = new Map<string, string>();
@@ -377,8 +461,7 @@ class PiBackendSession implements BackendSession {
       if (
         input.messageId !== undefined &&
         (event.type === "message_start" || event.type === "message_end") &&
-        event.message.role === "user" &&
-        this.session.messages.indexOf(event.message) === promptMessageIndex
+        event.message.role === "user"
       ) {
         this.messageIdOverrides.set(event.message, input.messageId);
       }
@@ -387,7 +470,8 @@ class PiBackendSession implements BackendSession {
         event,
         this.session.messages,
         messageIds,
-        this.messageIdOverrides
+        this.messageIdOverrides,
+        this.currentIdentity()
       )) {
         emit(translated);
       }
@@ -495,7 +579,12 @@ export class PiSessionBackend implements SessionBackend {
       result.session,
       input.cwd,
       input.title ?? `Pi session ${input.id}`,
-      input.permission ?? []
+      input.permission ?? [],
+      {
+        agent: "pi",
+        modelId: this.config.modelId,
+        providerId: this.config.providerId,
+      }
     );
   }
 

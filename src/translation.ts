@@ -16,6 +16,18 @@ import type {
   SessionStatus,
 } from "./types.ts";
 
+export interface TranslationIdentity {
+  readonly agent: string;
+  readonly modelId: string;
+  readonly providerId: string;
+}
+
+const DEFAULT_IDENTITY: TranslationIdentity = {
+  agent: "pi",
+  modelId: "pi",
+  providerId: "pi",
+};
+
 function textPart(text: string): FacadePart {
   return { text, type: "text" };
 }
@@ -133,28 +145,29 @@ function statusEvent(sessionID: string, status: SessionStatus): FacadeEvent {
 
 function messageInfo(
   sessionID: string,
-  message: FacadeMessage
+  message: FacadeMessage,
+  identity: TranslationIdentity
 ): OpenCodeMessageInfo {
   if (message.role === "user") {
     return {
-      agent: "pi",
+      agent: identity.agent,
       id: message.id,
-      model: { modelID: "pi", providerID: "pi" },
+      model: { modelID: identity.modelId, providerID: identity.providerId },
       role: "user",
       sessionID,
       time: message.time,
     };
   }
   return {
-    agent: "pi",
+    agent: identity.agent,
     cost: 0,
     ...(message.time.completed === undefined ? {} : { finish: "stop" }),
     id: message.id,
     mode: "all",
-    modelID: "pi",
+    modelID: identity.modelId,
     parentID: "",
     path: { cwd: "", root: "" },
-    providerID: "pi",
+    providerID: identity.providerId,
     role: "assistant",
     sessionID,
     time: message.time,
@@ -169,10 +182,11 @@ function messageInfo(
 
 function messageUpdatedEvent(
   sessionID: string,
-  message: FacadeMessage
+  message: FacadeMessage,
+  identity: TranslationIdentity
 ): FacadeEvent {
   return sessionEvent(sessionID, "message.updated", {
-    info: messageInfo(sessionID, message),
+    info: messageInfo(sessionID, message, identity),
   });
 }
 
@@ -231,7 +245,8 @@ export function translateAgentEvent(
   event: AgentSessionEvent,
   messages: readonly AgentMessage[],
   messageIds: Map<string, string> = new Map(),
-  messageIdOverrides: ReadonlyMap<AgentMessage, string> = new Map()
+  messageIdOverrides: ReadonlyMap<AgentMessage, string> = new Map(),
+  identity: TranslationIdentity = DEFAULT_IDENTITY
 ): readonly FacadeEvent[] {
   switch (event.type) {
     case "agent_start":
@@ -247,7 +262,9 @@ export function translateAgentEvent(
         event.message,
         messageIdOverrides
       );
-      return message === null ? [] : [messageUpdatedEvent(sessionID, message)];
+      return message === null
+        ? []
+        : [messageUpdatedEvent(sessionID, message, identity)];
     }
     case "message_update": {
       const update = event.assistantMessageEvent;
@@ -299,7 +316,8 @@ export function translateAgentEvent(
       return [
         messageUpdatedEvent(
           sessionID,
-          messageId === undefined ? message : { ...message, id: messageId }
+          messageId === undefined ? message : { ...message, id: messageId },
+          identity
         ),
       ];
     }

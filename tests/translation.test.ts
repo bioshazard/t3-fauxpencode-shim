@@ -37,6 +37,27 @@ describe("Pi message ID translation", () => {
     expect(translated[0]?.properties.info?.role).toBe("user");
   });
 
+  test("uses configured provider and model identity in native events", () => {
+    const assistant: AssistantMessage = {
+      content: [{ text: "hello", type: "text" }],
+      role: "assistant",
+      timestamp: 2,
+    } as unknown as AssistantMessage;
+    const translated = translateAgentEvent(
+      "thread",
+      { message: assistant, type: "message_end" } as AgentSessionEvent,
+      [assistant],
+      new Map(),
+      new Map(),
+      { agent: "pi", modelId: "configured", providerId: "custom-pi" }
+    );
+
+    expect(translated[0]?.properties.info).toMatchObject({
+      modelID: "configured",
+      providerID: "custom-pi",
+    });
+  });
+
   test("emits native OpenCode streaming events with cumulative text parts", () => {
     const user: UserMessage = {
       content: "hello",

@@ -46,8 +46,12 @@ describe("Pi session backend", () => {
           totalTokens: 0,
         },
       };
-      manager.appendMessage(user);
+      const userEntryId = manager.appendMessage(user);
       manager.appendMessage(assistant);
+      manager.appendCustomEntry("pi-opencode-shim-message-id", {
+        facadeId: "caller-user-id",
+        messageEntryId: userEntryId,
+      });
 
       const reopened = await new SessionRegistry(
         new PiSessionBackend(config)
@@ -55,6 +59,7 @@ describe("Pi session backend", () => {
 
       expect(reopened?.id).toBe("pi-session");
       expect(reopened?.messages).toHaveLength(2);
+      expect(reopened?.messages[0]?.id).toBe("caller-user-id");
       expect(reopened?.messages[1]?.parts[0]).toEqual({
         text: "hello back",
         type: "text",
