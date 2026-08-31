@@ -18,6 +18,11 @@ export interface CaptureRecord {
   };
   readonly connection: {
     readonly closedAt?: string;
+    readonly reason:
+      | "client-cancelled"
+      | "normal"
+      | "server-closed"
+      | "transport-error";
     readonly state: "closed" | "error";
   };
   readonly correlation?: Readonly<Record<string, string>>;
@@ -38,7 +43,11 @@ export interface CaptureRecord {
     readonly frames: readonly {
       readonly data: string;
       readonly event: string | null;
+      readonly id?: string;
+      readonly comments: readonly string[];
       readonly parsed?: JsonValue;
+      readonly receivedAtMs: number;
+      readonly retry?: number;
       readonly raw: string;
     }[];
     readonly reconnect: number;
@@ -113,42 +122,94 @@ function sseScope(path: string): "global" | "session" | "unknown" {
   return "unknown";
 }
 
-function parseSseFrames(body: string, path: string): CaptureRecord["sse"] {
+interface TimedChunk {
+  readonly atMs: number;
+  readonly text: string;
+}
+
+function parseSsePayload(
+  payload: string,
+  raw: string,
+  receivedAtMs: number
+): NonNullable<CaptureRecord["sse"]>["frames"][number] {
+  let event: string | null = null;
+  let id: string | undefined;
+  let retry: number | undefined;
+  const comments: string[] = [];
+  const data: string[] = [];
+  for (const line of payload.split(/\r?\n/u)) {
+    if (line.startsWith(":")) {
+      comments.push(
+        line.slice(1).startsWith(" ") ? line.slice(2) : line.slice(1)
+      );
+    } else if (line.startsWith("event:")) {
+      event = line.slice("event:".length).trim();
+    } else if (line.startsWith("data:")) {
+      data.push(line.slice("data:".length).trimStart());
+    } else if (line.startsWith("id:")) {
+      id = line.slice("id:".length).trimStart();
+    } else if (line.startsWith("retry:")) {
+      const parsedRetry = Number.parseInt(
+        line.slice("retry:".length).trim(),
+        10
+      );
+      if (Number.isSafeInteger(parsedRetry) && parsedRetry >= 0)
+        retry = parsedRetry;
+    }
+  }
+  const joined = data.join("\n");
+  let parsed: JsonValue | undefined;
+  try {
+    parsed = JSON.parse(joined) as JsonValue;
+  } catch {
+    parsed = undefined;
+  }
+  return {
+    comments,
+    data: joined,
+    event,
+    ...(id === undefined ? {} : { id }),
+    ...(parsed === undefined ? {} : { parsed }),
+    receivedAtMs,
+    ...(retry === undefined ? {} : { retry }),
+    raw,
+  };
+}
+
+function parseSseFrames(
+  chunks: readonly TimedChunk[],
+  path: string,
+  redact: (value: string) => string
+): NonNullable<CaptureRecord["sse"]> {
   const frames: Array<{
     data: string;
     event: string | null;
+    id?: string;
+    comments: readonly string[];
     parsed?: JsonValue;
+    receivedAtMs: number;
+    retry?: number;
     raw: string;
   }> = [];
-  let offset = 0;
-  while (offset < body.length) {
-    const lf = body.indexOf("\n\n", offset);
-    const crlf = body.indexOf("\r\n\r\n", offset);
-    const boundary = lf < 0 ? crlf : crlf < 0 ? lf : Math.min(lf, crlf);
-    if (boundary < 0) break;
-    const separatorLength = body.startsWith("\r\n", boundary + 2) ? 4 : 2;
-    const raw = body.slice(offset, boundary + separatorLength);
-    const payload = body.slice(offset, boundary);
-    let event: string | null = null;
-    const data: string[] = [];
-    for (const line of payload.split(/\r?\n/u)) {
-      if (line.startsWith("event:")) event = line.slice(6).trim();
-      if (line.startsWith("data:")) data.push(line.slice(5).trimStart());
+  let buffer = "";
+  for (const chunk of chunks) {
+    buffer += chunk.text;
+    while (true) {
+      const lf = buffer.indexOf("\n\n");
+      const crlf = buffer.indexOf("\r\n\r\n");
+      const boundary = lf < 0 ? crlf : crlf < 0 ? lf : Math.min(lf, crlf);
+      if (boundary < 0) break;
+      const separatorLength = buffer.startsWith("\r\n", boundary + 2) ? 4 : 2;
+      const raw = redact(buffer.slice(0, boundary + separatorLength));
+      frames.push(
+        parseSsePayload(
+          redact(buffer.slice(0, boundary)),
+          raw,
+          Math.max(0, Math.round(chunk.atMs))
+        )
+      );
+      buffer = buffer.slice(boundary + separatorLength);
     }
-    const joined = data.join("\n");
-    let parsed: JsonValue | undefined;
-    try {
-      parsed = JSON.parse(joined) as JsonValue;
-    } catch {
-      parsed = undefined;
-    }
-    frames.push({
-      data: joined,
-      event,
-      ...(parsed === undefined ? {} : { parsed }),
-      raw,
-    });
-    offset = boundary + separatorLength;
   }
   return { frames, reconnect: 1, scope: sseScope(path) };
 }
@@ -203,6 +264,7 @@ export class Redactor {
 export class CaptureStore {
   private sequence = 0;
   private writeTail: Promise<void> = Promise.resolve();
+  private readonly reconnects = new Map<string, number>();
 
   constructor(
     private readonly config: CaptureConfig,
@@ -212,6 +274,18 @@ export class CaptureStore {
   nextSequence(): number {
     this.sequence += 1;
     return this.sequence;
+  }
+
+  nextReconnect(
+    path: string,
+    correlation: Readonly<Record<string, string>> | undefined
+  ): number {
+    const run = correlation?.["x-contract-run-id"] ?? "";
+    const scenario = correlation?.["x-contract-scenario"] ?? "";
+    const key = `${run}\u0000${scenario}\u0000${path}`;
+    const reconnect = (this.reconnects.get(key) ?? 0) + 1;
+    this.reconnects.set(key, reconnect);
+    return reconnect;
   }
 
   redact(value: string): string {
@@ -274,6 +348,7 @@ export function createCaptureHandler(
     const requestBytes = new Uint8Array(await request.clone().arrayBuffer());
     const requestBody = bodyText(requestBytes, config.maxBodyBytes);
     const correlation = correlationHeaders(request.headers);
+    const reconnect = store.nextReconnect(requestURL.pathname, correlation);
     const upstreamRequest: RequestInit = {
       body:
         request.method === "GET" || request.method === "HEAD"
@@ -300,7 +375,7 @@ export function createCaptureHandler(
       },
       sequence,
       startedAt,
-      connection: { state: "error" },
+      connection: { reason: "transport-error", state: "error" },
       ...(correlation === undefined ? {} : { correlation }),
     } satisfies CaptureRecord;
 
@@ -321,6 +396,8 @@ export function createCaptureHandler(
         baseRecord,
         upstream,
         recordBody,
+        request.signal,
+        reconnect,
         started
       ).catch(async (error: unknown) => {
         await store.append({
@@ -330,7 +407,12 @@ export function createCaptureHandler(
             headers: store.redactHeaders(upstream.headers),
             status: upstream.status,
           },
-          connection: { state: "error" },
+          connection: {
+            reason: request.signal.aborted
+              ? "client-cancelled"
+              : "transport-error",
+            state: "error",
+          },
           transportError:
             error instanceof Error ? error.message : "response capture failed",
         });
@@ -340,6 +422,12 @@ export function createCaptureHandler(
       const record: CaptureRecord = {
         ...baseRecord,
         durationMs: Math.round(performance.now() - started),
+        connection: {
+          reason: request.signal.aborted
+            ? "client-cancelled"
+            : "transport-error",
+          state: "error",
+        },
         transportError:
           error instanceof Error ? error.message : "upstream request failed",
       };
@@ -364,10 +452,13 @@ async function recordResponse(
   baseRecord: CaptureRecord,
   upstream: Response,
   body: ReadableStream<Uint8Array> | null,
+  requestSignal: AbortSignal,
+  reconnect: number,
   started: number
 ): Promise<void> {
   let responseBytes = new Uint8Array();
   let responseTruncated = false;
+  const timedChunks: TimedChunk[] = [];
   if (body !== null) {
     const reader = body.getReader();
     const chunks: Uint8Array[] = [];
@@ -376,10 +467,13 @@ async function recordResponse(
       const next = await reader.read();
       if (next.done) break;
       if (next.value === undefined) continue;
+      const receivedAtMs = performance.now() - started;
       const remaining = config.maxBodyBytes - totalBytes;
       if (remaining > 0) {
         const visible = next.value.subarray(0, remaining);
         chunks.push(visible);
+        if (visible.byteLength > 0)
+          timedChunks.push({ atMs: receivedAtMs, text: "" });
         if (visible.byteLength < next.value.byteLength)
           responseTruncated = true;
       } else {
@@ -395,6 +489,25 @@ async function recordResponse(
       offset += visible.byteLength;
       if (offset >= responseBytes.byteLength) break;
     }
+    const decoder = new TextDecoder();
+    for (const [index, chunk] of chunks.entries()) {
+      const timed = timedChunks[index];
+      if (timed !== undefined)
+        timedChunks[index] = {
+          atMs: timed.atMs,
+          text: decoder.decode(chunk, { stream: true }),
+        };
+    }
+    const tail = decoder.decode();
+    if (tail.length > 0) {
+      const last = timedChunks.at(-1);
+      if (last === undefined) timedChunks.push({ atMs: 0, text: tail });
+      else
+        timedChunks[timedChunks.length - 1] = {
+          atMs: last.atMs,
+          text: last.text + tail,
+        };
+    }
   }
   const responseBody = bodyText(responseBytes, config.maxBodyBytes);
   const redactedResponse = store.redact(responseBody.text);
@@ -408,6 +521,11 @@ async function recordResponse(
     },
     connection: {
       closedAt: new Date().toISOString(),
+      reason: requestSignal.aborted
+        ? "client-cancelled"
+        : contentType.includes("text/event-stream")
+          ? "server-closed"
+          : "normal",
       state: "closed",
     },
     durationMs: Math.round(performance.now() - started),
@@ -416,7 +534,14 @@ async function recordResponse(
       status: upstream.status,
     },
     ...(contentType.includes("text/event-stream")
-      ? { sse: parseSseFrames(redactedResponse, baseRecord.request.path) }
+      ? {
+          sse: {
+            ...parseSseFrames(timedChunks, baseRecord.request.path, (value) =>
+              store.redact(value)
+            ),
+            reconnect,
+          },
+        }
       : {}),
   };
   await store.append(record);
