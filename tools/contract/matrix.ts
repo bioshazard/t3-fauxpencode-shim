@@ -10,13 +10,21 @@ interface Matrix {
 const matrixPath = new URL("../../contracts/matrix.json", import.meta.url);
 
 function isRecord(
-  value: JsonValue
+  value: JsonValue | undefined
 ): value is { readonly [key: string]: JsonValue } {
   return Object.prototype.toString.call(value) === "[object Object]";
 }
 
 function isString(value: JsonValue | undefined): value is string {
   return Object.prototype.toString.call(value) === "[object String]";
+}
+
+function containsTbd(value: JsonValue): boolean {
+  if (isString(value)) return value === "TBD";
+  if (Array.isArray(value)) return value.some((item) => containsTbd(item));
+  if (isRecord(value))
+    return Object.values(value).some((item) => containsTbd(item));
+  return false;
 }
 
 function decodeMatrix(value: JsonValue): Matrix {
@@ -39,8 +47,40 @@ function decodeMatrix(value: JsonValue): Matrix {
     ids.add(row.id);
     if (!isString(row.scenario))
       throw new Error(`Matrix row ${row.id} has no scenario.`);
+    if (!/^C[0-9]{2}$/u.test(row.scenario))
+      throw new Error(`Matrix row ${row.id} has an invalid scenario.`);
+    const requiredStrings = ["operation", "trigger", "errorBehavior"];
+    for (const key of requiredStrings) {
+      if (!isString(row[key]))
+        throw new Error(`Matrix row ${row.id} needs string ${key}.`);
+    }
+    for (const key of ["request", "response", "stateEffect"]) {
+      if (!isRecord(row[key]))
+        throw new Error(`Matrix row ${row.id} needs object ${key}.`);
+    }
+    if (!Array.isArray(row.events))
+      throw new Error(`Matrix row ${row.id} needs events.`);
+    if (!Array.isArray(row.normalization))
+      throw new Error(`Matrix row ${row.id} needs normalization.`);
     if (!Array.isArray(row.evidence) || row.evidence.length === 0) {
       throw new Error(`Matrix row ${row.id} needs evidence.`);
+    }
+    if (
+      row.confidence !== "observed" &&
+      row.confidence !== "source-confirmed" &&
+      row.confidence !== "hypothesis"
+    ) {
+      throw new Error(`Matrix row ${row.id} has invalid confidence.`);
+    }
+    if (
+      row.support !== "required" &&
+      row.support !== "conditional" &&
+      row.support !== "excluded"
+    ) {
+      throw new Error(`Matrix row ${row.id} has invalid support.`);
+    }
+    if (value.status === "frozen" && containsTbd(row)) {
+      throw new Error(`Frozen matrix row ${row.id} contains TBD.`);
     }
   }
   if (value.status === "frozen" && value.rows.length === 0) {

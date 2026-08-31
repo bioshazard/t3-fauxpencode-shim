@@ -25,6 +25,11 @@ Generated from `contracts/inventory.json`; edit the JSON, then run `bun run cont
 | OC-HTTP-0012 | session.promptAsync | http | POST | `/session/{sessionID}/prompt_async` | required | apps/server/src/provider/Layers/OpenCodeAdapter.ts:2687 (sendTurn)<br>packages/sdk/js/src/v2/gen/sdk.gen.ts:4095 (Session.promptAsync) |
 | OC-HTTP-0013 | session.abort | http | POST | `/session/{sessionID}/abort` | required | apps/server/src/provider/Layers/OpenCodeAdapter.ts:703 (abortOpenCodeSessionForTeardown)<br>packages/sdk/js/src/v2/gen/sdk.gen.ts:3913 (Session.abort) |
 | OC-HTTP-0014 | session.revert | http | POST | `/session/{sessionID}/revert` | required | apps/server/src/provider/Layers/OpenCodeAdapter.ts:3111 (rollbackThread)<br>packages/sdk/js/src/v2/gen/sdk.gen.ts:4286 (Session.revert) |
+| OC-HTTP-0015 | permission.list | http | GET | `/permission` | conditional | apps/server/src/provider/Layers/OpenCodeAdapter.ts:1717 (handleSubscribedEvent)<br>packages/sdk/js/src/v2/gen/sdk.gen.ts:3087 (Permission.list) |
+| OC-HTTP-0016 | permission.reply | http | POST | `/permission/{requestID}/reply` | conditional | apps/server/src/provider/Layers/OpenCodeAdapter.ts:3010 (respondToRequest)<br>packages/sdk/js/src/v2/gen/sdk.gen.ts:3125 (Permission.reply) |
+| OC-HTTP-0017 | question.list | http | GET | `/question` | conditional | apps/server/src/provider/Layers/OpenCodeAdapter.ts:1718 (handleSubscribedEvent)<br>packages/sdk/js/src/v2/gen/sdk.gen.ts:2985 (Question.list) |
+| OC-HTTP-0018 | question.reply | http | POST | `/question/{requestID}/reply` | conditional | apps/server/src/provider/Layers/OpenCodeAdapter.ts:3032 (respondToUserInput)<br>packages/sdk/js/src/v2/gen/sdk.gen.ts:3016 (Question.reply) |
+| OC-HTTP-0019 | mcp.add | http | POST | `/mcp` | conditional | apps/server/src/provider/Layers/OpenCodeAdapter.ts:2322 (startSession)<br>packages/sdk/js/src/v2/gen/types.gen.ts:8461 (McpAddData) |
 | OC-CLI-0002 | models --verbose | process | exec | — | conditional | apps/server/src/provider/opencodeRuntime.ts:880 (loadInventoryFromCli) |
 | OC-CLI-0003 | agent list | process | exec | — | conditional | apps/server/src/provider/opencodeRuntime.ts:886 (loadInventoryFromCli) |
 | OC-CLI-0004 | debug skill | process | exec | — | conditional | apps/server/src/provider/opencodeRuntime.ts:892 (loadInventoryFromCli) |

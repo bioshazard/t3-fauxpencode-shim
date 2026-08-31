@@ -392,6 +392,125 @@
       ]
     },
     {
+      "id": "OC-HTTP-0015",
+      "category": "permissions",
+      "operation": "permission.list",
+      "transport": "http",
+      "method": "GET",
+      "path": "/permission",
+      "support": "conditional",
+      "sources": [
+        {
+          "repository": "https://github.com/pingdotgg/t3code.git",
+          "path": "apps/server/src/provider/Layers/OpenCodeAdapter.ts",
+          "line": 1717,
+          "symbol": "handleSubscribedEvent"
+        },
+        {
+          "repository": "https://github.com/anomalyco/opencode.git",
+          "path": "packages/sdk/js/src/v2/gen/sdk.gen.ts",
+          "line": 3087,
+          "symbol": "Permission.list"
+        }
+      ]
+    },
+    {
+      "id": "OC-HTTP-0016",
+      "category": "permissions",
+      "operation": "permission.reply",
+      "transport": "http",
+      "method": "POST",
+      "path": "/permission/{requestID}/reply",
+      "support": "conditional",
+      "requestFields": ["reply", "message"],
+      "sources": [
+        {
+          "repository": "https://github.com/pingdotgg/t3code.git",
+          "path": "apps/server/src/provider/Layers/OpenCodeAdapter.ts",
+          "line": 3010,
+          "symbol": "respondToRequest"
+        },
+        {
+          "repository": "https://github.com/anomalyco/opencode.git",
+          "path": "packages/sdk/js/src/v2/gen/sdk.gen.ts",
+          "line": 3125,
+          "symbol": "Permission.reply"
+        }
+      ]
+    },
+    {
+      "id": "OC-HTTP-0017",
+      "category": "questions",
+      "operation": "question.list",
+      "transport": "http",
+      "method": "GET",
+      "path": "/question",
+      "support": "conditional",
+      "sources": [
+        {
+          "repository": "https://github.com/pingdotgg/t3code.git",
+          "path": "apps/server/src/provider/Layers/OpenCodeAdapter.ts",
+          "line": 1718,
+          "symbol": "handleSubscribedEvent"
+        },
+        {
+          "repository": "https://github.com/anomalyco/opencode.git",
+          "path": "packages/sdk/js/src/v2/gen/sdk.gen.ts",
+          "line": 2985,
+          "symbol": "Question.list"
+        }
+      ]
+    },
+    {
+      "id": "OC-HTTP-0018",
+      "category": "questions",
+      "operation": "question.reply",
+      "transport": "http",
+      "method": "POST",
+      "path": "/question/{requestID}/reply",
+      "support": "conditional",
+      "requestFields": ["answers"],
+      "sources": [
+        {
+          "repository": "https://github.com/pingdotgg/t3code.git",
+          "path": "apps/server/src/provider/Layers/OpenCodeAdapter.ts",
+          "line": 3032,
+          "symbol": "respondToUserInput"
+        },
+        {
+          "repository": "https://github.com/anomalyco/opencode.git",
+          "path": "packages/sdk/js/src/v2/gen/sdk.gen.ts",
+          "line": 3016,
+          "symbol": "Question.reply"
+        }
+      ]
+    },
+    {
+      "id": "OC-HTTP-0019",
+      "category": "mcp",
+      "operation": "mcp.add",
+      "transport": "http",
+      "method": "POST",
+      "path": "/mcp",
+      "support": "conditional",
+      "requestFields": ["name", "config"],
+      "notes": "Used when T3 owns a local OpenCode process and has an MCP session.",
+      "sources": [
+        {
+          "repository": "https://github.com/pingdotgg/t3code.git",
+          "path": "apps/server/src/provider/Layers/OpenCodeAdapter.ts",
+          "line": 2322,
+          "symbol": "startSession"
+        },
+        {
+          "repository": "https://github.com/anomalyco/opencode.git",
+          "path": "packages/sdk/js/src/v2/gen/types.gen.ts",
+          "line": 8461,
+          "symbol": "McpAddData"
+        }
+      ]
+    },
+    {
       "id": "OC-CLI-0002",
       "category": "discovery",
       "operation": "models --verbose",
