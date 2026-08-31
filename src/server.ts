@@ -171,7 +171,10 @@ function createSessionHandler(
             contractError("invalid_request", parsed.message),
             400
           );
-        const snapshot = await sessions.getSnapshot(sessionId);
+        const snapshot = await sessions.updateSession(
+          sessionId,
+          parsed.permission
+        );
         return snapshot === null
           ? notFound()
           : jsonResponse(sessionResponse(snapshot, config));

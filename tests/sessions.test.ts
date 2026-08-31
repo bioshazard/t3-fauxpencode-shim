@@ -36,6 +36,19 @@ describe("session registry facade", () => {
       title: "Pi session thread-1",
     });
 
+    const updated = await first(
+      new Request("http://shim.test/session/thread-1", {
+        body: JSON.stringify({
+          permission: [{ action: "allow", pattern: "**", permission: "read" }],
+        }),
+        method: "PATCH",
+      })
+    );
+    expect(updated.status).toBe(200);
+    expect((await updated.json()).permission).toEqual([
+      { action: "allow", pattern: "**", permission: "read" },
+    ]);
+
     const listed = await first(new Request("http://shim.test/session"));
     expect(await listed.json()).toHaveLength(1);
 

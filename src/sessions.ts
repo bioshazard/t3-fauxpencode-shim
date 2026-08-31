@@ -32,6 +32,7 @@ export interface BackendSession {
     emit: SessionEventSink
   ): Promise<SessionSnapshot>;
   abort(): Promise<void>;
+  update(permission: readonly JsonValue[] | undefined): Promise<void>;
   revert(messageId: string): Promise<SessionSnapshot | null>;
   dispose(): void;
 }
@@ -65,7 +66,7 @@ class MemoryBackendSession implements BackendSession {
     public readonly id: string,
     private readonly cwd: string,
     private readonly title: string,
-    private readonly permission: readonly JsonValue[]
+    private permission: readonly JsonValue[]
   ) {
     this.created = now();
     this.updated = this.created;
@@ -228,6 +229,10 @@ class MemoryBackendSession implements BackendSession {
     });
   }
 
+  async update(permission: readonly JsonValue[] | undefined): Promise<void> {
+    if (permission !== undefined) this.permission = [...permission];
+  }
+
   async revert(messageId: string): Promise<SessionSnapshot | null> {
     const index = this.messages.findIndex(
       (message) => message.id === messageId
@@ -306,7 +311,7 @@ class PiBackendSession implements BackendSession {
     private readonly session: AgentSession,
     private readonly cwd: string,
     private readonly title: string,
-    private readonly permission: readonly JsonValue[]
+    private permission: readonly JsonValue[]
   ) {
     const header = session.sessionManager.getHeader();
     this.created = header === null ? now() : Date.parse(header.timestamp);
@@ -422,6 +427,10 @@ class PiBackendSession implements BackendSession {
     this.status = "aborted";
     if (this.activeEmit !== undefined)
       emitStatus(this.id, this.status, this.activeEmit);
+  }
+
+  async update(permission: readonly JsonValue[] | undefined): Promise<void> {
+    if (permission !== undefined) this.permission = [...permission];
   }
 
   async revert(messageId: string): Promise<SessionSnapshot | null> {
@@ -562,6 +571,16 @@ export class SessionRegistry {
     const session = await this.getSession(id);
     if (session === null) return null;
     await session.abort();
+    return session.snapshot();
+  }
+
+  async updateSession(
+    id: string,
+    permission: readonly JsonValue[] | undefined
+  ): Promise<SessionSnapshot | null> {
+    const session = await this.getSession(id);
+    if (session === null) return null;
+    await session.update(permission);
     return session.snapshot();
   }
 
