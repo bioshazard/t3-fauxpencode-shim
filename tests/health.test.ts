@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
-import { createHandler } from "../src/server.ts";
+import { loadConfig } from "../src/config.ts";
+import { createHandler, SSE_IDLE_TIMEOUT_SECONDS } from "../src/server.ts";
 import type { ShimConfig } from "../src/types.ts";
 
 const config: ShimConfig = {
@@ -18,6 +19,14 @@ const request = async (path: string, method = "GET") =>
   createHandler(config)(new Request(`http://shim.test${path}`, { method }));
 
 describe("health and discovery", () => {
+  test("loads a T3-compatible OpenCode health version", () => {
+    expect(loadConfig({}).version).toBe("1.14.19");
+  });
+
+  test("keeps Bun SSE connections alive indefinitely", () => {
+    expect(SSE_IDLE_TIMEOUT_SECONDS).toBe(0);
+  });
+
   test("reports readiness", async () => {
     const response = await request("/global/health");
 

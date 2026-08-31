@@ -37,6 +37,9 @@ type ResponseBody =
   | readonly FacadeMessage[]
   | readonly SessionSnapshot[];
 
+// Bun closes inactive requests after 10 seconds by default; T3 keeps /event open.
+export const SSE_IDLE_TIMEOUT_SECONDS = 0;
+
 function jsonResponse(body: ResponseBody, status = 200): Response {
   return Response.json(body, {
     headers: { "cache-control": "no-store" },
@@ -334,6 +337,7 @@ export function runServer(
   const server = Bun.serve({
     fetch: createSessionHandler(config, sessions, events),
     hostname: config.host,
+    idleTimeout: SSE_IDLE_TIMEOUT_SECONDS,
     port: config.port,
   });
   console.log(`pi-opencode-server listening on ${server.url}`);

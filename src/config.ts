@@ -4,7 +4,8 @@ const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 4096;
 const DEFAULT_PROVIDER = "pi";
 const DEFAULT_MODEL = "configured";
-const SERVICE_VERSION = "0.1.0-poc";
+// T3 gates external OpenCode providers on this protocol dialect version.
+const OPENCODE_COMPAT_VERSION = "1.14.19";
 
 function configuredPort(value: string | undefined): number {
   if (value === undefined || value.length === 0) return DEFAULT_PORT;
@@ -23,6 +24,6 @@ export function loadConfig(environment: Environment = Bun.env): ShimConfig {
     port: configuredPort(environment.PI_OPENCODE_PORT),
     providerId: environment.PI_PROVIDER ?? DEFAULT_PROVIDER,
     sessionDir: environment.PI_SESSION_DIR,
-    version: SERVICE_VERSION,
+    version: OPENCODE_COMPAT_VERSION,
   };
 }
