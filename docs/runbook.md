@@ -1,6 +1,6 @@
 # Capture and verification runbook
 
-The repository has three independent capture tools. The inventory and matrix are committed evidence; raw runs are written under ignored `artifacts/` paths.
+The repository has independent inventory, recorder, scenario, capture-validation, and reference-supervisor tools. The inventory and matrix are committed evidence; raw runs are written under ignored `artifacts/` paths.
 
 ## Local checks
 
@@ -49,7 +49,7 @@ SCENARIO_OUTPUT=artifacts/runs/<corpus>.json \
 bun run contract:scenarios
 ```
 
-The current driver exercises C01-C06 (with C05 history), C11 abort, C13-C14 rollback/continue, C17 concurrency, and C18 malformed/unknown requests. A `partial` report means setup or terminal SSE evidence was unavailable; it is not a passing contract.
+The local driver exercises C01-C06 (C04 list/get/missing lookup; C05 empty and populated history), C11 abort, C13-C14 rollback/continue, C17 scoped concurrency, and C18 malformed/unknown requests. C11 requires a supplied active-turn barrier; without it the report is deliberately `partial`. A `partial` report is never a passing contract.
 
 ## Run the pinned reference gate
 
@@ -63,14 +63,14 @@ REFERENCE_T3_ARGV='["pnpm","test:opencode-adapter"]' \
 bun run contract:reference
 ```
 
-`REFERENCE_T3_ARGV` must invoke the unmodified pinned T3 provider path; the supervisor rejects missing commands and does not substitute the raw-fetch scenario driver. A successful run validates the capture JSONL and writes a reference-run manifest. The command fails if OpenCode never becomes healthy, T3 exits non-zero, or capture validation fails.
+`REFERENCE_T3_ARGV` must invoke the unmodified pinned T3 provider path; the supervisor rejects missing commands and does not substitute the raw-fetch scenario driver. The T3 command must write the scenario report at `SCENARIO_OUTPUT`. A successful run validates the capture JSONL and requires every scenario report entry to pass before writing a reference-run manifest. The command fails if OpenCode never becomes healthy, T3 exits non-zero, the scenario report is partial, or capture validation fails.
 
 ## Maintain evidence
 
 1. Update `contracts/manifest.json` for a new upstream identity; never overwrite a corpus with a different identity.
 2. Update `contracts/inventory.json` from pinned source and run `bun run contract:inventory`.
 3. Keep raw captures in ignored `artifacts/raw/`; redact before moving any fixture into version control.
-4. Populate `contracts/matrix.json` only from raw evidence and T3 canonical observations.
+4. Populate `contracts/matrix.json` only from raw evidence and T3 canonical observations; never promote local shim output to reference evidence.
 5. Run `bun run contract:matrix` and the full test suite before committing.
 
 The matrix remains `pending-reference-capture` until every required row has reproducible evidence and no implementation-blocking unknowns.

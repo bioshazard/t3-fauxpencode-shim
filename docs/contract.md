@@ -51,7 +51,7 @@ Before dynamic capture, the implementer MUST produce a static inventory from the
 5. identify how T3 reconstructs canonical thread state and decides a turn is complete, aborted, failed, or rolled back; and
 6. identify provider logs/traces used for diagnosis.
 
-Output: `artifacts/inventory.json` and a short generated Markdown view. Each inventory entry MUST cite file and line or symbol in the pinned T3 tree.
+Output: `contracts/inventory.json` and a short generated Markdown view. Each inventory entry MUST cite file and line or symbol in the pinned T3 tree.
 
 If pinned T3 cannot target an external server, use the narrowest test-only seam already present. If none exists, add transport/process injection only in the external test harness or vendored test checkout. The intended deployed system MUST use unmodified T3.
 
@@ -237,8 +237,10 @@ docs/
   contract.md
 contracts/
   manifest.json
-  matrix.yaml
-  schema.json
+  matrix.json
+  inventory.schema.json
+  matrix.schema.json
+  capture.schema.json
 fixtures/
   raw/<corpus>/<scenario>/
   normalized/<corpus>/<scenario>/

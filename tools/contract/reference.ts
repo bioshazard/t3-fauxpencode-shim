@@ -29,6 +29,12 @@ function isString(value: unknown): value is string {
   return Object.prototype.toString.call(value) === "[object String]";
 }
 
+function isRecord(
+  value: unknown
+): value is { readonly [key: string]: unknown } {
+  return Object.prototype.toString.call(value) === "[object Object]";
+}
+
 function readArgv(name: string): readonly string[] {
   const raw = Bun.env[name];
   if (raw === undefined || raw.trim().length === 0)
@@ -51,6 +57,26 @@ function readArgv(name: string): readonly string[] {
 
 function replacePort(argv: readonly string[], port: number): readonly string[] {
   return argv.map((part) => part.replaceAll("%PORT%", String(port)));
+}
+
+async function validateScenarioOutput(path: string): Promise<void> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(await Bun.file(path).text()) as unknown;
+  } catch {
+    throw new Error(`Scenario report ${path} is missing or invalid JSON.`);
+  }
+  if (!isRecord(parsed) || parsed.status !== "completed")
+    throw new Error(`Scenario report ${path} is not completed.`);
+  const scenarios = parsed.scenarios;
+  if (!Array.isArray(scenarios) || scenarios.length === 0)
+    throw new Error(`Scenario report ${path} has no scenarios.`);
+  if (
+    scenarios.some(
+      (scenario) => !isRecord(scenario) || scenario.passed !== true
+    )
+  )
+    throw new Error(`Scenario report ${path} contains a failed scenario.`);
 }
 
 function configFromEnv(): ReferenceConfig {
@@ -186,6 +212,7 @@ async function runReference(
       throw new Error(`Stock T3 reference command exited with ${exitCode}.`);
     await store.flush();
     await loadCapture(config.capturePath);
+    await validateScenarioOutput(scenarioOutput);
     status = "passed";
   } catch (error) {
     await writeManifest();
