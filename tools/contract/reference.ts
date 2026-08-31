@@ -3,6 +3,11 @@ import { dirname, resolve } from "node:path";
 
 import { loadCapture } from "./capture.ts";
 import { createCaptureHandler, makeCaptureConfig } from "./recorder.ts";
+import {
+  REQUIRED_REFERENCE_SCENARIOS,
+  type ReferenceManifest,
+  validateCompletedScenarioReport,
+} from "./reference-artifacts.ts";
 
 interface ReferenceConfig {
   readonly capturePath: string;
@@ -15,18 +20,6 @@ interface ReferenceConfig {
   readonly t3Root: string;
   readonly t3Argv: readonly string[];
   readonly timeoutMs: number;
-}
-
-interface ReferenceManifest {
-  readonly capturePath: string;
-  readonly client: "stock-t3-opencode-adapter";
-  readonly corpusId: string;
-  readonly generatedAt: string;
-  readonly opencodeArgv: readonly string[];
-  readonly runId: string;
-  readonly scenarioOutput?: string;
-  readonly status: "failed" | "passed";
-  readonly t3Argv: readonly string[];
 }
 
 function isString(value: unknown): value is string {
@@ -131,11 +124,6 @@ async function verifyPinnedCheckouts(
     );
 }
 
-const REQUIRED_REFERENCE_SCENARIOS = Array.from(
-  { length: 19 },
-  (_unused, index) => `C${String(index + 1).padStart(2, "0")}`
-);
-
 async function validateScenarioOutput(
   path: string,
   corpusId: string,
@@ -148,36 +136,9 @@ async function validateScenarioOutput(
   } catch {
     throw new Error(`Scenario report ${path} is missing or invalid JSON.`);
   }
-  if (
-    !isRecord(parsed) ||
-    parsed.status !== "completed" ||
-    parsed.corpusId !== corpusId ||
-    parsed.runId !== runId
-  )
-    throw new Error(`Scenario report ${path} is not completed.`);
   if (Bun.file(path).lastModified < startedAtMs)
     throw new Error(`Scenario report ${path} predates this reference run.`);
-  const scenarios = parsed.scenarios;
-  if (!Array.isArray(scenarios) || scenarios.length === 0)
-    throw new Error(`Scenario report ${path} has no scenarios.`);
-  const ids = new Set<string>();
-  for (const scenario of scenarios) {
-    if (!isRecord(scenario) || !isString(scenario.id))
-      throw new Error(`Scenario report ${path} contains an invalid scenario.`);
-    if (ids.has(scenario.id))
-      throw new Error(`Scenario report ${path} repeats ${scenario.id}.`);
-    ids.add(scenario.id);
-  }
-  for (const id of REQUIRED_REFERENCE_SCENARIOS) {
-    if (!ids.has(id))
-      throw new Error(`Scenario report ${path} is missing ${id}.`);
-  }
-  if (
-    scenarios.some(
-      (scenario) => !isRecord(scenario) || scenario.passed !== true
-    )
-  )
-    throw new Error(`Scenario report ${path} contains a failed scenario.`);
+  validateCompletedScenarioReport(parsed, { corpusId, runId });
 }
 
 async function configFromEnv(): Promise<ReferenceConfig> {
