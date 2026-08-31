@@ -1,17 +1,13 @@
-import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 
 import { loadCapture } from "./capture.ts";
 import {
   decodeReferenceManifest,
+  REQUIRED_REFERENCE_SCENARIOS,
+  sha256File,
   validateCompletedScenarioReport,
   type ReferenceManifest,
 } from "./reference-artifacts.ts";
-
-async function sha256File(path: string): Promise<string> {
-  const bytes = await Bun.file(path).arrayBuffer();
-  return createHash("sha256").update(Buffer.from(bytes)).digest("hex");
-}
 
 async function readJson(path: string): Promise<unknown> {
   try {
@@ -19,10 +15,6 @@ async function readJson(path: string): Promise<unknown> {
   } catch {
     throw new Error(`Reference artifact ${path} is missing or invalid JSON.`);
   }
-}
-
-function artifactPath(path: string): string {
-  return resolve(path);
 }
 
 export async function verifyReferenceArtifacts(
@@ -37,8 +29,8 @@ export async function verifyReferenceArtifacts(
   )
     throw new Error("Reference manifest is missing artifact checksums.");
 
-  const capturePath = artifactPath(manifest.capturePath);
-  const scenarioPath = artifactPath(
+  const capturePath = resolve(manifest.capturePath);
+  const scenarioPath = resolve(
     manifest.scenarioOutput ?? `artifacts/runs/${manifest.corpusId}.json`
   );
   if (!(await Bun.file(capturePath).exists()))
@@ -63,8 +55,14 @@ export async function verifyReferenceArtifacts(
   for (const record of records) {
     if (record.correlation?.["x-contract-run-id"] !== manifest.runId)
       throw new Error("Reference capture contains a record from another run.");
-    if (record.correlation?.["x-contract-scenario"] === "unknown")
-      throw new Error("Reference capture contains an unclassified exchange.");
+    const scenario = record.correlation?.["x-contract-scenario"];
+    if (
+      scenario === undefined ||
+      !REQUIRED_REFERENCE_SCENARIOS.includes(scenario)
+    )
+      throw new Error(
+        "Reference capture contains an exchange without a known scenario."
+      );
   }
 
   validateCompletedScenarioReport(await readJson(scenarioPath), {

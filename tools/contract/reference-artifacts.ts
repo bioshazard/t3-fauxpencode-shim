@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 export const REQUIRED_REFERENCE_SCENARIOS = Array.from(
   { length: 19 },
   (_unused, index) => `C${String(index + 1).padStart(2, "0")}`
@@ -52,7 +54,7 @@ function requiredString(
   return result;
 }
 
-function argv(
+function readManifestArgv(
   value: { readonly [key: string]: unknown },
   key: string
 ): readonly string[] {
@@ -68,7 +70,7 @@ function argv(
   return result;
 }
 
-function commit(
+function readManifestCommit(
   value: { readonly [key: string]: unknown },
   key: string
 ): string {
@@ -82,7 +84,7 @@ function commit(
   return result;
 }
 
-function hash(
+function readOptionalSha256(
   value: { readonly [key: string]: unknown },
   key: string
 ): string | undefined {
@@ -113,8 +115,8 @@ export function decodeReferenceManifest(value: unknown): ReferenceManifest {
   );
   if (Number.isNaN(Date.parse(generatedAt)))
     throw new Error("Reference manifest generatedAt must be an ISO timestamp.");
-  const captureSha256 = hash(value, "captureSha256");
-  const scenarioSha256 = hash(value, "scenarioSha256");
+  const captureSha256 = readOptionalSha256(value, "captureSha256");
+  const scenarioSha256 = readOptionalSha256(value, "scenarioSha256");
   if (
     status === "passed" &&
     (captureSha256 === undefined || scenarioSha256 === undefined)
@@ -134,8 +136,8 @@ export function decodeReferenceManifest(value: unknown): ReferenceManifest {
       "Reference manifest corpusId is required."
     ),
     generatedAt,
-    openCodeCommit: commit(value, "openCodeCommit"),
-    opencodeArgv: argv(value, "opencodeArgv"),
+    openCodeCommit: readManifestCommit(value, "openCodeCommit"),
+    opencodeArgv: readManifestArgv(value, "opencodeArgv"),
     runId: requiredString(
       value,
       "runId",
@@ -152,8 +154,8 @@ export function decodeReferenceManifest(value: unknown): ReferenceManifest {
           ),
         }),
     status,
-    t3Commit: commit(value, "t3Commit"),
-    t3Argv: argv(value, "t3Argv"),
+    t3Commit: readManifestCommit(value, "t3Commit"),
+    t3Argv: readManifestArgv(value, "t3Argv"),
   };
 }
 
@@ -192,11 +194,7 @@ export function decodeScenarioReport(value: unknown): ScenarioReport {
 
 export function validateCompletedScenarioReport(
   value: unknown,
-  expected: {
-    readonly corpusId: string;
-    readonly runId: string;
-    readonly requiredScenarioIds?: readonly string[];
-  }
+  expected: { readonly corpusId: string; readonly runId: string }
 ): ScenarioReport {
   const report = decodeScenarioReport(value);
   if (report.status !== "completed")
@@ -208,7 +206,7 @@ export function validateCompletedScenarioReport(
   if (report.runId !== expected.runId)
     throw new Error("Scenario report runId does not match the reference run.");
 
-  const required = expected.requiredScenarioIds ?? REQUIRED_REFERENCE_SCENARIOS;
+  const required = REQUIRED_REFERENCE_SCENARIOS;
   const requiredSet = new Set(required);
   const ids = new Set<string>();
   for (const scenario of report.scenarios) {
@@ -224,4 +222,9 @@ export function validateCompletedScenarioReport(
     if (!ids.has(id)) throw new Error(`Scenario report is missing ${id}.`);
   }
   return report;
+}
+
+export async function sha256File(path: string): Promise<string> {
+  const bytes = await Bun.file(path).arrayBuffer();
+  return createHash("sha256").update(Buffer.from(bytes)).digest("hex");
 }

@@ -82,4 +82,52 @@ describe("reference corpus verification", () => {
       "scenario checksum mismatch"
     );
   });
+
+  test("rejects capture records with unknown scenario labels", async () => {
+    const root = await mkdtemp(join(tmpdir(), "reference-verify-unknown-"));
+    const capturePath = join(root, "capture.jsonl");
+    const scenarioPath = join(root, "scenarios.json");
+    const manifestPath = join(root, "manifest.json");
+    const capture = `${JSON.stringify({
+      ...captureRecord(),
+      correlation: {
+        "x-contract-run-id": "run",
+        "x-contract-scenario": "C99",
+      },
+    })}\n`;
+    const scenario = JSON.stringify({
+      corpusId: "corpus",
+      generatedAt: "2026-08-31T12:00:00.000Z",
+      runId: "run",
+      scenarios: REQUIRED_REFERENCE_SCENARIOS.map((id) => ({
+        id,
+        passed: true,
+      })),
+      status: "completed",
+    });
+    await Bun.write(capturePath, capture);
+    await Bun.write(scenarioPath, scenario);
+    await Bun.write(
+      manifestPath,
+      JSON.stringify({
+        capturePath,
+        captureSha256: digest(capture),
+        client: "stock-t3-opencode-adapter",
+        corpusId: "corpus",
+        generatedAt: "2026-08-31T12:00:00.000Z",
+        openCodeCommit: "b".repeat(40),
+        opencodeArgv: ["opencode", "serve"],
+        runId: "run",
+        scenarioOutput: scenarioPath,
+        scenarioSha256: digest(scenario),
+        status: "passed",
+        t3Argv: ["pnpm", "test"],
+        t3Commit: "d".repeat(40),
+      })
+    );
+
+    await expect(verifyReferenceArtifacts(manifestPath)).rejects.toThrow(
+      "known scenario"
+    );
+  });
 });

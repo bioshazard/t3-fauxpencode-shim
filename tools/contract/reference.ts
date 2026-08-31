@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
@@ -7,6 +6,7 @@ import { createCaptureHandler, makeCaptureConfig } from "./recorder.ts";
 import {
   REQUIRED_REFERENCE_SCENARIOS,
   decodeReferenceManifest,
+  sha256File,
   type ReferenceManifest,
   validateCompletedScenarioReport,
 } from "./reference-artifacts.ts";
@@ -125,11 +125,6 @@ async function verifyPinnedCheckouts(
       `OpenCode checkout is ${actualOpenCode}, expected pinned ${openCode}.`
     );
   return { openCodeCommit: actualOpenCode, t3Commit: actualT3 };
-}
-
-async function sha256File(path: string): Promise<string> {
-  const bytes = await Bun.file(path).arrayBuffer();
-  return createHash("sha256").update(Buffer.from(bytes)).digest("hex");
 }
 
 async function validateScenarioOutput(
@@ -334,18 +329,23 @@ async function runReference(
     const capturedScenarios = new Set(
       records.flatMap((record) => {
         const scenario = record.correlation?.["x-contract-scenario"];
-        return scenario === undefined || scenario === "unknown"
+        return scenario === undefined ||
+          !REQUIRED_REFERENCE_SCENARIOS.includes(scenario)
           ? []
           : [scenario];
       })
     );
     if (
-      records.some(
-        (record) => record.correlation?.["x-contract-scenario"] === "unknown"
-      )
+      records.some((record) => {
+        const scenario = record.correlation?.["x-contract-scenario"];
+        return (
+          scenario === undefined ||
+          !REQUIRED_REFERENCE_SCENARIOS.includes(scenario)
+        );
+      })
     )
       throw new Error(
-        "Capture contains an exchange without scenario correlation."
+        "Capture contains an exchange without a known scenario correlation."
       );
     for (const scenario of REQUIRED_REFERENCE_SCENARIOS) {
       if (!capturedScenarios.has(scenario))
