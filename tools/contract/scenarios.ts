@@ -61,6 +61,21 @@ function bodySessionId(body: string | null): string | null {
     : null;
 }
 
+function bodyAssistantId(body: string | null): string | null {
+  if (body === null) return null;
+  const parsed = parsedBody(body);
+  if (!Array.isArray(parsed)) return null;
+  for (const item of parsed) {
+    if (!isRecord(item)) continue;
+    const info = item.info;
+    if (!isRecord(info) || info.role !== "assistant") continue;
+    const id = info.id;
+    if (Object.prototype.toString.call(id) === "[object String]")
+      return String(id);
+  }
+  return null;
+}
+
 async function call(
   baseUrl: string,
   method: string,
@@ -68,9 +83,18 @@ async function call(
   body?: unknown
 ): Promise<OperationResult> {
   try {
+    const serializedBody =
+      Object.prototype.toString.call(body) === "[object String]"
+        ? String(body)
+        : body === undefined
+          ? undefined
+          : JSON.stringify(body);
     const response = await fetch(new URL(path, baseUrl), {
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      headers: body === undefined ? {} : { "content-type": "application/json" },
+      ...(serializedBody === undefined ? {} : { body: serializedBody }),
+      headers:
+        serializedBody === undefined
+          ? {}
+          : { "content-type": "application/json" },
       method,
     });
     const text = await response.text();
@@ -123,7 +147,14 @@ function isTerminalFrame(frame: SseFrame): boolean {
   if (!isRecord(parsed)) return false;
   const properties = parsed.properties;
   if (!isRecord(properties)) return false;
-  return properties.sessionStatus === "idle" || properties.status === "idle";
+  return (
+    properties.sessionStatus === "idle" ||
+    properties.status === "idle" ||
+    properties.sessionStatus === "aborted" ||
+    properties.status === "aborted" ||
+    properties.sessionStatus === "error" ||
+    properties.status === "error"
+  );
 }
 
 interface OpenSse {
@@ -255,6 +286,13 @@ export async function runScenarios(
     ],
     sessionId,
   });
+  results.push({
+    expectedTerminal: "empty history response received",
+    id: "C05",
+    observedEventTypes: [],
+    operations: [await call(baseUrl, "GET", `${sessionPath}/message`)],
+    sessionId,
+  });
 
   const stream = openSse(baseUrl, timeoutMs);
   try {
@@ -292,6 +330,177 @@ export async function runScenarios(
             error instanceof Error ? error.message : "SSE capture failed",
         },
       ],
+      sessionId,
+    });
+  }
+
+  const populatedHistory = await call(baseUrl, "GET", `${sessionPath}/message`);
+  const assistantId = bodyAssistantId(populatedHistory.body);
+  const revert = await call(baseUrl, "POST", `${sessionPath}/revert`, {
+    messageID: assistantId ?? "missing-assistant",
+  });
+  results.push({
+    expectedTerminal: "completed turn can be reverted",
+    id: "C13",
+    observedEventTypes: [],
+    operations: [
+      populatedHistory,
+      revert,
+      await call(baseUrl, "GET", `${sessionPath}/message`),
+    ],
+    sessionId,
+  });
+
+  const continuedStream = openSse(baseUrl, timeoutMs);
+  try {
+    await continuedStream.ready;
+    const continuedPrompt = await call(
+      baseUrl,
+      "POST",
+      `${sessionPath}/prompt_async`,
+      { parts: [{ text: "after rollback", type: "text" }] }
+    );
+    const continuedEvents = await continuedStream.done;
+    results.push({
+      expectedTerminal: "a reverted session accepts a new turn",
+      id: "C14",
+      observedEventTypes: continuedEvents.eventTypes,
+      operations: [
+        continuedPrompt,
+        await call(baseUrl, "GET", `${sessionPath}/message`),
+      ],
+      sessionId,
+    });
+  } catch (error) {
+    continuedStream.stop();
+    results.push({
+      expectedTerminal: "a reverted session accepts a new turn",
+      id: "C14",
+      observedEventTypes: [],
+      operations: [
+        {
+          body: null,
+          method: "POST",
+          path: `${sessionPath}/prompt_async`,
+          status: null,
+          transportError:
+            error instanceof Error ? error.message : "SSE capture failed",
+        },
+      ],
+      sessionId,
+    });
+  }
+
+  const abortStream = openSse(baseUrl, timeoutMs);
+  try {
+    await abortStream.ready;
+    const prompt = call(baseUrl, "POST", `${sessionPath}/prompt_async`, {
+      parts: [{ text: "abort me", type: "text" }],
+    });
+    const abort = await call(baseUrl, "POST", `${sessionPath}/abort`);
+    const promptResult = await prompt;
+    const abortEvents = await abortStream.done;
+    results.push({
+      expectedTerminal: "active turn abort returns and closes the stream",
+      id: "C11",
+      observedEventTypes: abortEvents.eventTypes,
+      operations: [promptResult, abort],
+      sessionId,
+    });
+  } catch (error) {
+    abortStream.stop();
+    results.push({
+      expectedTerminal: "active turn abort returns and closes the stream",
+      id: "C11",
+      observedEventTypes: [],
+      operations: [
+        {
+          body: null,
+          method: "POST",
+          path: `${sessionPath}/abort`,
+          status: null,
+          transportError:
+            error instanceof Error ? error.message : "abort capture failed",
+        },
+      ],
+      sessionId,
+    });
+  }
+
+  const malformed = await call(baseUrl, "POST", "/session", "not-json");
+  const missing = await call(baseUrl, "POST", "/session/missing/prompt_async", {
+    parts: [{ text: "missing", type: "text" }],
+  });
+  results.push({
+    expectedTerminal: "malformed and unknown-session requests return errors",
+    id: "C18",
+    observedEventTypes: [],
+    operations: [malformed, missing],
+    sessionId,
+  });
+
+  const secondCreate = await call(baseUrl, "POST", "/session", {});
+  const secondId = bodySessionId(secondCreate.body);
+  if (secondId !== null) {
+    const firstStream = openSse(baseUrl, timeoutMs);
+    const secondStream = openSse(baseUrl, timeoutMs);
+    try {
+      await Promise.all([firstStream.ready, secondStream.ready]);
+      const [firstPrompt, secondPrompt] = await Promise.all([
+        call(baseUrl, "POST", `${sessionPath}/prompt_async`, {
+          parts: [{ text: "parallel one", type: "text" }],
+        }),
+        call(
+          baseUrl,
+          "POST",
+          `/session/${encodeURIComponent(secondId)}/prompt_async`,
+          {
+            parts: [{ text: "parallel two", type: "text" }],
+          }
+        ),
+      ]);
+      const [firstEvents, secondEvents] = await Promise.all([
+        firstStream.done,
+        secondStream.done,
+      ]);
+      results.push({
+        expectedTerminal: "two sessions complete without event leakage",
+        id: "C17",
+        observedEventTypes: [
+          ...firstEvents.eventTypes,
+          ...secondEvents.eventTypes,
+        ],
+        operations: [secondCreate, firstPrompt, secondPrompt],
+        sessionId,
+      });
+    } catch (error) {
+      firstStream.stop();
+      secondStream.stop();
+      results.push({
+        expectedTerminal: "two sessions complete without event leakage",
+        id: "C17",
+        observedEventTypes: [],
+        operations: [
+          {
+            body: null,
+            method: "POST",
+            path: "/session/{sessionID}/prompt_async",
+            status: null,
+            transportError:
+              error instanceof Error
+                ? error.message
+                : "concurrency capture failed",
+          },
+        ],
+        sessionId,
+      });
+    }
+  } else {
+    results.push({
+      expectedTerminal: "two sessions complete without event leakage",
+      id: "C17",
+      observedEventTypes: [],
+      operations: [secondCreate],
       sessionId,
     });
   }

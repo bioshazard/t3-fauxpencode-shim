@@ -67,11 +67,18 @@ describe("headless contract scenarios", () => {
         "C02",
         "C03",
         "C04",
+        "C05",
         "C06",
+        "C13",
+        "C14",
+        "C11",
+        "C18",
+        "C17",
       ]);
-      expect(report.scenarios.at(-1)?.observedEventTypes).toEqual([
-        "turn.completed",
-      ]);
+      expect(
+        report.scenarios.find((scenario) => scenario.id === "C06")
+          ?.observedEventTypes
+      ).toEqual(["turn.completed"]);
     } finally {
       server.stop();
     }
