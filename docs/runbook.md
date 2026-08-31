@@ -58,12 +58,14 @@ The reference gate must be driven by stock T3's OpenCode adapter. The supervisor
 ```sh
 CORPUS_ID=<manifest-corpus-id> \
 REFERENCE_T3_KIND=stock-t3-opencode-adapter \
+T3_REFERENCE_ROOT=/path/to/pinned/t3code \
+OPENCODE_REFERENCE_ROOT=/path/to/pinned/opencode \
 REFERENCE_OPENCODE_ARGV='["opencode","serve","--hostname=127.0.0.1","--port=%PORT%"]' \
 REFERENCE_T3_ARGV='["pnpm","test:opencode-adapter"]' \
 bun run contract:reference
 ```
 
-`REFERENCE_T3_ARGV` must invoke the unmodified pinned T3 provider path; the supervisor rejects missing commands and does not substitute the raw-fetch scenario driver. The T3 command must write the scenario report at `SCENARIO_OUTPUT`. A successful run validates the capture JSONL and requires every scenario report entry to pass before writing a reference-run manifest. The command fails if OpenCode never becomes healthy, T3 exits non-zero, the scenario report is partial, or capture validation fails.
+The supervisor verifies both checkout HEADs against `contracts/manifest.json`, runs OpenCode from its pinned checkout, and passes the recorder URL as `OPENCODE_BASE_URL` to T3. `REFERENCE_T3_ARGV` must invoke the unmodified pinned T3 provider path; the supervisor rejects missing commands and does not substitute the raw-fetch scenario driver. The T3 command must write the scenario report at `SCENARIO_OUTPUT`. A successful run validates the capture JSONL and requires every scenario report entry to pass before writing a reference-run manifest. The command fails if either checkout is not pinned, OpenCode never becomes healthy, T3 exits non-zero, the scenario report is partial, or capture validation fails.
 
 ## Maintain evidence
 

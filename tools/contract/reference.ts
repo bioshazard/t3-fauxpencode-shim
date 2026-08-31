@@ -8,8 +8,10 @@ interface ReferenceConfig {
   readonly capturePath: string;
   readonly corpusId: string;
   readonly healthTimeoutMs: number;
+  readonly openCodeRoot: string;
   readonly opencodeArgv: readonly string[];
   readonly outputPath: string;
+  readonly t3Root: string;
   readonly t3Argv: readonly string[];
   readonly timeoutMs: number;
 }
@@ -59,18 +61,103 @@ function replacePort(argv: readonly string[], port: number): readonly string[] {
   return argv.map((part) => part.replaceAll("%PORT%", String(port)));
 }
 
-async function validateScenarioOutput(path: string): Promise<void> {
+function requiredEnv(name: string): string {
+  const value = Bun.env[name];
+  if (value === undefined || value.trim().length === 0)
+    throw new Error(`${name} is required.`);
+  return value;
+}
+
+async function pinnedCommit(root: string, name: string): Promise<string> {
+  const process = Bun.spawn({
+    cmd: ["git", "-C", root, "rev-parse", "HEAD"],
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const output = await new Response(process.stdout).text();
+  const exitCode = await process.exited;
+  if (exitCode !== 0)
+    throw new Error(`${name} checkout is not a readable git worktree.`);
+  return output.trim();
+}
+
+async function verifyPinnedCheckouts(
+  t3Root: string,
+  openCodeRoot: string
+): Promise<void> {
+  const manifest = (await Bun.file(
+    new URL("../../contracts/manifest.json", import.meta.url)
+  ).json()) as unknown;
+  if (!isRecord(manifest)) throw new Error("Pinned manifest is invalid.");
+  const t3 =
+    isRecord(manifest.subjects) && isRecord(manifest.subjects.t3Code)
+      ? manifest.subjects.t3Code.commit
+      : undefined;
+  const openCode =
+    isRecord(manifest.subjects) && isRecord(manifest.subjects.openCode)
+      ? manifest.subjects.openCode.commit
+      : undefined;
+  if (!isString(t3) || !isString(openCode))
+    throw new Error("Pinned manifest is missing upstream commits.");
+  const [actualT3, actualOpenCode] = await Promise.all([
+    pinnedCommit(t3Root, "T3"),
+    pinnedCommit(openCodeRoot, "OpenCode"),
+  ]);
+  if (actualT3 !== t3)
+    throw new Error(`T3 checkout is ${actualT3}, expected pinned ${t3}.`);
+  if (actualOpenCode !== openCode)
+    throw new Error(
+      `OpenCode checkout is ${actualOpenCode}, expected pinned ${openCode}.`
+    );
+}
+
+const REQUIRED_REFERENCE_SCENARIOS = [
+  "C01",
+  "C02",
+  "C03",
+  "C04",
+  "C05",
+  "C06",
+  "C11",
+  "C13",
+  "C14",
+  "C17",
+  "C18",
+] as const;
+
+async function validateScenarioOutput(
+  path: string,
+  corpusId: string,
+  runId: string,
+  startedAtMs: number
+): Promise<void> {
   let parsed: unknown;
   try {
     parsed = JSON.parse(await Bun.file(path).text()) as unknown;
   } catch {
     throw new Error(`Scenario report ${path} is missing or invalid JSON.`);
   }
-  if (!isRecord(parsed) || parsed.status !== "completed")
+  if (
+    !isRecord(parsed) ||
+    parsed.status !== "completed" ||
+    parsed.corpusId !== corpusId ||
+    parsed.runId !== runId
+  )
     throw new Error(`Scenario report ${path} is not completed.`);
+  if (Bun.file(path).lastModified < startedAtMs)
+    throw new Error(`Scenario report ${path} predates this reference run.`);
   const scenarios = parsed.scenarios;
   if (!Array.isArray(scenarios) || scenarios.length === 0)
     throw new Error(`Scenario report ${path} has no scenarios.`);
+  const ids = new Set(
+    scenarios.flatMap((scenario) =>
+      isRecord(scenario) && isString(scenario.id) ? [scenario.id] : []
+    )
+  );
+  for (const id of REQUIRED_REFERENCE_SCENARIOS) {
+    if (!ids.has(id))
+      throw new Error(`Scenario report ${path} is missing ${id}.`);
+  }
   if (
     scenarios.some(
       (scenario) => !isRecord(scenario) || scenario.passed !== true
@@ -79,7 +166,7 @@ async function validateScenarioOutput(path: string): Promise<void> {
     throw new Error(`Scenario report ${path} contains a failed scenario.`);
 }
 
-function configFromEnv(): ReferenceConfig {
+async function configFromEnv(): Promise<ReferenceConfig> {
   const corpusId = Bun.env.CORPUS_ID;
   if (corpusId === undefined || corpusId.trim().length === 0)
     throw new Error("CORPUS_ID is required.");
@@ -93,8 +180,10 @@ function configFromEnv(): ReferenceConfig {
     capturePath: Bun.env.CAPTURE_OUTPUT ?? `artifacts/raw/${corpusId}.jsonl`,
     corpusId,
     healthTimeoutMs: Number(Bun.env.REFERENCE_HEALTH_TIMEOUT_MS ?? 30_000),
+    openCodeRoot: requiredEnv("OPENCODE_REFERENCE_ROOT"),
     opencodeArgv: readArgv("REFERENCE_OPENCODE_ARGV"),
     outputPath,
+    t3Root: requiredEnv("T3_REFERENCE_ROOT"),
     t3Argv: readArgv("REFERENCE_T3_ARGV"),
     timeoutMs: Number(Bun.env.REFERENCE_TIMEOUT_MS ?? 10 * 60_000),
   };
@@ -142,17 +231,23 @@ async function runReference(
 ): Promise<ReferenceManifest> {
   assertDuration(config.healthTimeoutMs, "REFERENCE_HEALTH_TIMEOUT_MS");
   assertDuration(config.timeoutMs, "REFERENCE_TIMEOUT_MS");
+  await verifyPinnedCheckouts(config.t3Root, config.openCodeRoot);
   const reserved = reservePort();
   const opencodeArgv = replacePort(config.opencodeArgv, reserved.port);
+  reserved.release();
+  const runId = crypto.randomUUID();
+  const startedAtMs = Date.now();
   const opencode = Bun.spawn({
     cmd: [...opencodeArgv],
+    cwd: config.openCodeRoot,
     stderr: "inherit",
     stdout: "inherit",
   });
   const captureConfig = makeCaptureConfig(
     `http://127.0.0.1:${reserved.port}`,
     config.capturePath,
-    Number(Bun.env.CAPTURE_MAX_BODY_BYTES ?? 8 * 1024 * 1024)
+    Number(Bun.env.CAPTURE_MAX_BODY_BYTES ?? 8 * 1024 * 1024),
+    runId
   );
   const { handler, store } = createCaptureHandler(captureConfig);
   const recorder = Bun.serve({
@@ -167,7 +262,8 @@ async function runReference(
     ...process.env,
     CAPTURE_TARGET: recorder.url.toString(),
     CORPUS_ID: config.corpusId,
-    OPENCODE_BASE_URL: `http://127.0.0.1:${reserved.port}`,
+    CONTRACT_RUN_ID: runId,
+    OPENCODE_BASE_URL: recorder.url.toString(),
     SCENARIO_OUTPUT: scenarioOutput,
   };
   let status: "failed" | "passed" = "failed";
@@ -196,6 +292,7 @@ async function runReference(
     );
     const t3 = Bun.spawn({
       cmd: [...config.t3Argv],
+      cwd: config.t3Root,
       env: t3Env,
       stderr: "inherit",
       stdout: "inherit",
@@ -211,8 +308,19 @@ async function runReference(
     if (exitCode !== 0)
       throw new Error(`Stock T3 reference command exited with ${exitCode}.`);
     await store.flush();
-    await loadCapture(config.capturePath);
-    await validateScenarioOutput(scenarioOutput);
+    const records = await loadCapture(config.capturePath);
+    if (
+      records.some(
+        (record) => record.correlation?.["x-contract-run-id"] !== runId
+      )
+    )
+      throw new Error("Capture contains records from another run.");
+    await validateScenarioOutput(
+      scenarioOutput,
+      config.corpusId,
+      runId,
+      startedAtMs
+    );
     status = "passed";
   } catch (error) {
     await writeManifest();
@@ -226,7 +334,7 @@ async function runReference(
 }
 
 if (import.meta.main) {
-  const manifest = await runReference(configFromEnv());
+  const manifest = await runReference(await configFromEnv());
   console.log(
     `reference run ${manifest.status}; wrote ${Bun.env.REFERENCE_OUTPUT ?? "artifacts/runs/<corpus>.reference.json"}`
   );

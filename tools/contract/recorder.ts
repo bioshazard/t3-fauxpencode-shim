@@ -6,6 +6,7 @@ import type { JsonValue } from "../../src/types.ts";
 export interface CaptureConfig {
   readonly maxBodyBytes: number;
   readonly output: string;
+  readonly runId: string;
   readonly target: URL;
 }
 
@@ -50,6 +51,7 @@ export interface CaptureRecord {
       readonly retry?: number;
       readonly raw: string;
     }[];
+    readonly remainder?: string;
     readonly reconnect: number;
     readonly scope: "global" | "session" | "unknown";
   };
@@ -211,7 +213,12 @@ function parseSseFrames(
       buffer = buffer.slice(boundary + separatorLength);
     }
   }
-  return { frames, reconnect: 1, scope: sseScope(path) };
+  return {
+    frames,
+    ...(buffer.length === 0 ? {} : { remainder: redact(buffer) }),
+    reconnect: 1,
+    scope: sseScope(path),
+  };
 }
 
 export class Redactor {
@@ -265,6 +272,7 @@ export class CaptureStore {
   private sequence = 0;
   private writeTail: Promise<void> = Promise.resolve();
   private readonly reconnects = new Map<string, number>();
+  private readonly pending = new Set<Promise<void>>();
 
   constructor(
     private readonly config: CaptureConfig,
@@ -305,8 +313,21 @@ export class CaptureStore {
     await this.writeTail;
   }
 
+  track(promise: Promise<void>): void {
+    this.pending.add(promise);
+    void promise.then(
+      () => this.pending.delete(promise),
+      () => this.pending.delete(promise)
+    );
+  }
+
   async flush(): Promise<void> {
-    await this.writeTail;
+    while (true) {
+      await this.writeTail;
+      const pending = [...this.pending];
+      if (pending.length === 0) return;
+      await Promise.all(pending);
+    }
   }
 }
 
@@ -321,7 +342,8 @@ export function requestHeadersForUpstream(headers: Headers): Headers {
 export function makeCaptureConfig(
   target: string,
   output: string,
-  maxBodyBytes = 8 * 1024 * 1024
+  maxBodyBytes = 8 * 1024 * 1024,
+  runId = crypto.randomUUID()
 ): CaptureConfig {
   const parsedTarget = new URL(target);
   if (parsedTarget.protocol !== "http:" && parsedTarget.protocol !== "https:") {
@@ -330,7 +352,7 @@ export function makeCaptureConfig(
   if (maxBodyBytes < 1 || !Number.isSafeInteger(maxBodyBytes)) {
     throw new Error("Capture max body bytes must be a positive safe integer.");
   }
-  return { maxBodyBytes, output, target: parsedTarget };
+  return { maxBodyBytes, output, runId, target: parsedTarget };
 }
 
 export function createCaptureHandler(
@@ -347,7 +369,14 @@ export function createCaptureHandler(
     const requestURL = new URL(request.url);
     const requestBytes = new Uint8Array(await request.clone().arrayBuffer());
     const requestBody = bodyText(requestBytes, config.maxBodyBytes);
-    const correlation = correlationHeaders(request.headers);
+    const suppliedCorrelation = correlationHeaders(request.headers);
+    const correlation = {
+      "x-contract-run-id":
+        suppliedCorrelation?.["x-contract-run-id"] ?? config.runId,
+      "x-contract-scenario":
+        suppliedCorrelation?.["x-contract-scenario"] ?? "unknown",
+      ...suppliedCorrelation,
+    };
     const reconnect = store.nextReconnect(requestURL.pathname, correlation);
     const upstreamRequest: RequestInit = {
       body:
@@ -376,7 +405,7 @@ export function createCaptureHandler(
       sequence,
       startedAt,
       connection: { reason: "transport-error", state: "error" },
-      ...(correlation === undefined ? {} : { correlation }),
+      correlation,
     } satisfies CaptureRecord;
 
     try {
@@ -390,7 +419,7 @@ export function createCaptureHandler(
         status: upstream.status,
         statusText: upstream.statusText,
       });
-      void recordResponse(
+      const capturePromise = recordResponse(
         config,
         store,
         baseRecord,
@@ -417,6 +446,7 @@ export function createCaptureHandler(
             error instanceof Error ? error.message : "response capture failed",
         });
       });
+      store.track(capturePromise);
       return response;
     } catch (error) {
       const record: CaptureRecord = {

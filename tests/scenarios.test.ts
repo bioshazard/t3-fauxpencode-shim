@@ -74,13 +74,11 @@ describe("headless contract scenarios", () => {
           }
           if (operation === "prompt_async" && request.method === "POST") {
             prompted.add(id);
-            eventControllers
-              .get(id)
-              ?.enqueue(
-                encoder.encode(
-                  `event: turn.completed\ndata: ${JSON.stringify({ sessionID: id, type: "turn.completed" })}\n\n`
-                )
-              );
+            const body = await request.text();
+            const event = body.includes("abort me")
+              ? `event: session.status\ndata: ${JSON.stringify({ properties: { sessionStatus: "aborted" }, sessionID: id, type: "session.status" })}\n\n`
+              : `event: turn.completed\ndata: ${JSON.stringify({ sessionID: id, type: "turn.completed" })}\n\n`;
+            eventControllers.get(id)?.enqueue(encoder.encode(event));
             return new Response(null, { status: 204 });
           }
           if (operation === "abort" && request.method === "POST")
@@ -109,7 +107,7 @@ describe("headless contract scenarios", () => {
         server.url.toString(),
         "test-corpus",
         500,
-        { barrier: { waitFor: async () => undefined }, runId: "test-run" }
+        { barrier: { waitFor: async () => true }, runId: "test-run" }
       );
       expect(report.status).toBe("completed");
       expect(report.scenarios.map((scenario) => scenario.id)).toEqual([

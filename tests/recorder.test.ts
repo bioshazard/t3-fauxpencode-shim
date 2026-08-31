@@ -44,7 +44,10 @@ describe("contract recorder", () => {
       expect(records).toHaveLength(1);
       const record = JSON.parse(records[0] ?? "{}");
       expect(record.request.path).toBe("/event");
-      expect(record.correlation).toEqual({ "x-contract-scenario": "C06" });
+      expect(record.correlation).toMatchObject({
+        "x-contract-scenario": "C06",
+      });
+      expect(record.correlation).toHaveProperty("x-contract-run-id");
       expect(record.response.status).toBe(200);
       expect(record.body.response).toContain("event: message");
       expect(record.connection.state).toBe("closed");

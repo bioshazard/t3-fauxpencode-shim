@@ -85,6 +85,14 @@ function validateRecord(value: unknown, index: number): CaptureRecord {
   }
   if (value.correlation !== undefined)
     validateHeaders(value.correlation, index, "correlation");
+  if (!isRecord(value.correlation))
+    fail(index, "correlation is required for every exchange");
+  if (!isString(value.correlation["x-contract-run-id"]))
+    fail(index, "correlation is missing x-contract-run-id");
+  if (!isString(value.correlation["x-contract-scenario"]))
+    fail(index, "correlation is missing x-contract-scenario");
+  if (body.requestTruncated || body.responseTruncated)
+    fail(index, "body is truncated and cannot be reference evidence");
 
   if (value.sse !== undefined) {
     const sse = value.sse;
@@ -102,6 +110,10 @@ function validateRecord(value: unknown, index: number): CaptureRecord {
       sse.scope !== "unknown"
     )
       fail(index, "sse.scope is invalid");
+    if (sse.remainder !== undefined && !isString(sse.remainder))
+      fail(index, "sse.remainder must be a string");
+    if (isString(sse.remainder) && sse.remainder.length > 0)
+      fail(index, "sse stream ended with an incomplete frame");
     for (const [frameIndex, frame] of sse.frames.entries()) {
       if (!isRecord(frame))
         fail(index, `sse frame ${frameIndex} is not an object`);
@@ -168,6 +180,7 @@ export async function loadCapture(
 ): Promise<readonly CaptureRecord[]> {
   const text = await Bun.file(path).text();
   const lines = text.split(/\r?\n/u).filter((line) => line.trim().length > 0);
+  if (lines.length === 0) throw new Error("Capture is empty.");
   const values = lines.map((line, index) => {
     try {
       return JSON.parse(line) as unknown;

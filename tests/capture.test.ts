@@ -15,6 +15,10 @@ function record(sequence: number): Record<string, unknown> {
       reason: "normal",
       state: "closed",
     },
+    correlation: {
+      "x-contract-run-id": "run-1",
+      "x-contract-scenario": "C01",
+    },
     durationMs: 1,
     request: { headers: {}, method: "GET", path: "/health", query: {} },
     response: { headers: {}, status: 200 },

@@ -7,14 +7,30 @@
     "durationMs",
     "request",
     "body",
-    "connection"
+    "connection",
+    "correlation"
   ],
   "properties": {
     "sequence": { "type": "integer", "minimum": 1 },
     "startedAt": { "type": "string", "format": "date-time" },
     "durationMs": { "type": "number", "minimum": 0 },
     "request": { "type": "object" },
-    "body": { "type": "object" },
+    "body": {
+      "type": "object",
+      "required": [
+        "request",
+        "requestTruncated",
+        "response",
+        "responseTruncated"
+      ],
+      "properties": {
+        "request": { "type": ["string", "null"] },
+        "response": { "type": ["string", "null"] },
+        "requestTruncated": { "type": "boolean" },
+        "responseTruncated": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
     "response": { "type": "object" },
     "connection": {
       "type": "object",
@@ -35,12 +51,14 @@
     },
     "correlation": {
       "type": "object",
+      "required": ["x-contract-run-id", "x-contract-scenario"],
       "additionalProperties": { "type": "string" }
     },
     "sse": {
       "type": "object",
       "required": ["frames", "reconnect", "scope"],
       "properties": {
+        "remainder": { "type": "string" },
         "reconnect": { "type": "integer", "minimum": 1 },
         "scope": { "enum": ["global", "session", "unknown"] },
         "frames": {

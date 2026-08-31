@@ -19,6 +19,8 @@ export interface ScenarioResult {
 }
 
 type ScenarioResultInput = Omit<ScenarioResult, "failures" | "passed"> & {
+  readonly abortValid?: boolean;
+  readonly barrierValid?: boolean;
   readonly scopeValid?: boolean;
 };
 
@@ -26,6 +28,7 @@ export interface ScenarioReport {
   readonly baseUrl: string;
   readonly corpusId: string | null;
   readonly generatedAt: string;
+  readonly runId: string;
   readonly scenarios: readonly ScenarioResult[];
   readonly status: "completed" | "partial";
 }
@@ -38,11 +41,12 @@ interface SseFrame {
 interface SseResult {
   readonly eventTypes: readonly string[];
   readonly sessionIDs: readonly string[];
+  readonly terminalStatuses: readonly string[];
   readonly terminal: boolean;
 }
 
 export interface ScenarioBarrier {
-  readonly waitFor: (name: string) => Promise<void>;
+  readonly waitFor: (name: string) => Promise<boolean>;
 }
 
 export interface ScenarioOptions {
@@ -79,6 +83,12 @@ function parsedBody(value: string): unknown {
   } catch {
     return undefined;
   }
+}
+
+function operationBody(operation: OperationResult | undefined): unknown {
+  return operation?.body === null || operation?.body === undefined
+    ? undefined
+    : parsedBody(operation.body);
 }
 
 function bodySessionId(body: string | null): string | null {
@@ -239,12 +249,18 @@ function openSse(
     });
     resolveReady(response);
     if (response.body === null)
-      return { eventTypes: [], sessionIDs: [], terminal: false };
+      return {
+        eventTypes: [],
+        sessionIDs: [],
+        terminalStatuses: [],
+        terminal: false,
+      };
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
     const types: string[] = [];
     const sessionIDs = new Set<string>();
+    const terminalStatuses = new Set<string>();
     let terminal = false;
     try {
       while (true) {
@@ -264,12 +280,18 @@ function openSse(
             const parsed = parsedBody(frame.data);
             if (isRecord(parsed) && isStringValue(parsed.sessionID))
               sessionIDs.add(parsed.sessionID);
+            if (isRecord(parsed) && isRecord(parsed.properties)) {
+              const status =
+                parsed.properties.sessionStatus ?? parsed.properties.status;
+              if (isStringValue(status)) terminalStatuses.add(status);
+            }
             if (isTerminalFrame(frame)) {
               terminal = true;
               controller.abort();
               return {
                 eventTypes: types,
                 sessionIDs: [...sessionIDs],
+                terminalStatuses: [...terminalStatuses],
                 terminal,
               };
             }
@@ -277,14 +299,24 @@ function openSse(
           boundary = frameBoundary(buffer);
         }
       }
-      return { eventTypes: types, sessionIDs: [...sessionIDs], terminal };
+      return {
+        eventTypes: types,
+        sessionIDs: [...sessionIDs],
+        terminalStatuses: [...terminalStatuses],
+        terminal,
+      };
     } finally {
       clearTimeout(timer);
     }
   })().catch((error: unknown) => {
     rejectReady(error);
     if (error instanceof DOMException && error.name === "AbortError") {
-      return { eventTypes: [], sessionIDs: [], terminal: false };
+      return {
+        eventTypes: [],
+        sessionIDs: [],
+        terminalStatuses: [],
+        terminal: false,
+      };
     }
     throw error;
   });
@@ -347,9 +379,25 @@ function finalizeScenarios(
         check(1, 200);
         check(2, 200);
         check(3, 404);
+        if (!Array.isArray(operationBody(scenario.operations[0])))
+          failures.push("session list response is not an array");
+        if (!Array.isArray(operationBody(scenario.operations[2])))
+          failures.push("history response is not an array");
         break;
       case "C05":
         scenario.operations.forEach((_operation, index) => check(index, 200));
+        if (
+          !Array.isArray(operationBody(scenario.operations[0])) ||
+          (operationBody(scenario.operations[0]) as readonly unknown[])
+            .length !== 0
+        )
+          failures.push("empty history observation was not empty");
+        if (
+          !Array.isArray(operationBody(scenario.operations[1])) ||
+          (operationBody(scenario.operations[1]) as readonly unknown[])
+            .length === 0
+        )
+          failures.push("populated history observation was empty");
         break;
       case "C06":
         check(0, 204);
@@ -360,12 +408,10 @@ function finalizeScenarios(
         check(0, 204);
         check(1, 200);
         if (!barriersAvailable) failures.push("C11 barrier was not provided");
-        if (
-          !scenario.observedEventTypes.some((type) =>
-            ["turn.completed", "session.status"].includes(type)
-          )
-        )
-          failures.push("no abort terminal event observed");
+        if (scenario.barrierValid !== true)
+          failures.push("C11 barrier did not prove an active turn");
+        if (scenario.abortValid !== true)
+          failures.push("abort-specific terminal status was not observed");
         break;
       case "C13":
         check(0, 200);
@@ -377,12 +423,14 @@ function finalizeScenarios(
         check(1, 200);
         if (!scenario.observedEventTypes.includes("turn.completed"))
           failures.push("no post-rollback completion event observed");
+        if (!Array.isArray(operationBody(scenario.operations[1])))
+          failures.push("post-rollback history response is not an array");
         break;
       case "C17":
         scenario.operations.forEach((_operation, index) =>
           check(index, any2xx)
         );
-        if (scenario.scopeValid === false)
+        if (scenario.scopeValid !== true)
           failures.push("session-scoped event stream leaked another session");
         break;
       case "C18":
@@ -392,7 +440,12 @@ function finalizeScenarios(
       default:
         break;
     }
-    const { scopeValid: _scopeValid, ...publicScenario } = scenario;
+    const {
+      abortValid: _abortValid,
+      barrierValid: _barrierValid,
+      scopeValid: _scopeValid,
+      ...publicScenario
+    } = scenario;
     return {
       ...publicScenario,
       failures,
@@ -457,6 +510,7 @@ export async function runScenarios(
       baseUrl,
       corpusId,
       generatedAt: new Date().toISOString(),
+      runId,
       scenarios,
       status: "partial",
     };
@@ -644,6 +698,7 @@ export async function runScenarios(
     timeoutMs,
     context("C11", sessionId)
   );
+  let abortBarrierValid = false;
   try {
     await abortStream.ready;
     const prompt = call(
@@ -653,7 +708,8 @@ export async function runScenarios(
       { parts: [{ text: "abort me", type: "text" }] },
       context("C11", sessionId, "C11-turn")
     );
-    await (barrier?.waitFor("C11.turn-active") ?? Promise.resolve());
+    abortBarrierValid =
+      barrier === undefined ? false : await barrier.waitFor("C11.turn-active");
     const abort = await call(
       baseUrl,
       "POST",
@@ -667,6 +723,8 @@ export async function runScenarios(
       expectedTerminal: "active turn abort returns and closes the stream",
       id: "C11",
       observedEventTypes: abortEvents.eventTypes,
+      abortValid: abortEvents.terminalStatuses.includes("aborted"),
+      barrierValid: abortBarrierValid,
       operations: [promptResult, abort],
       sessionId,
     });
@@ -676,6 +734,7 @@ export async function runScenarios(
       expectedTerminal: "active turn abort returns and closes the stream",
       id: "C11",
       observedEventTypes: [],
+      barrierValid: false,
       operations: [
         {
           body: null,
@@ -811,6 +870,7 @@ export async function runScenarios(
     baseUrl,
     corpusId,
     generatedAt: new Date().toISOString(),
+    runId,
     scenarios,
     status:
       scenarios.length > 0 && scenarios.every((scenario) => scenario.passed)
@@ -826,7 +886,13 @@ if (import.meta.main) {
   }
   const output = Bun.env.SCENARIO_OUTPUT ?? "artifacts/runs/latest.json";
   const corpusId = Bun.env.CORPUS_ID ?? null;
-  const report = await runScenarios(baseUrl, corpusId);
+  const runId = Bun.env.CONTRACT_RUN_ID ?? Bun.env.SCENARIO_RUN_ID;
+  const report = await runScenarios(
+    baseUrl,
+    corpusId,
+    15_000,
+    runId === undefined ? {} : { runId }
+  );
   await Bun.write(output, `${JSON.stringify(report, null, 2)}\n`);
   console.log(`scenario run ${report.status}; wrote ${output}`);
 }
