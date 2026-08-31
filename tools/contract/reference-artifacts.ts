@@ -474,36 +474,50 @@ export function decodeScenarioReport(value: unknown): ScenarioReport {
         throw new Error(
           `Scenario report entry ${id} required scenarios cannot have skipReason.`
         );
-      if (!Object.hasOwn(scenario, "declaredState"))
+      const hasDeclaredState = Object.hasOwn(scenario, "declaredState");
+      const hasCanonicalState = Object.hasOwn(scenario, "canonicalState");
+      if (applicability === "required" && !hasDeclaredState)
         throw new Error(
           `Scenario report entry ${id} declaredState evidence is required.`
         );
-      if (!Object.hasOwn(scenario, "canonicalState"))
+      if (applicability === "required" && !hasCanonicalState)
         throw new Error(
           `Scenario report entry ${id} canonicalState evidence is required.`
         );
       const declaredState = scenario.declaredState;
       const canonicalState = scenario.canonicalState;
-      requireEvidenceSource(
-        declaredState,
-        `Scenario report entry ${id} declaredState`
-      );
-      const canonicalEvidence = requireEvidenceSource(
-        canonicalState,
-        `Scenario report entry ${id} canonicalState`
-      );
-      if (applicability === "required" && canonicalEvidence.source !== "t3")
+      if (hasDeclaredState)
+        requireEvidenceSource(
+          declaredState,
+          `Scenario report entry ${id} declaredState`
+        );
+      const canonicalEvidence = hasCanonicalState
+        ? requireEvidenceSource(
+            canonicalState,
+            `Scenario report entry ${id} canonicalState`
+          )
+        : undefined;
+      if (applicability === "required" && canonicalEvidence?.source !== "t3")
         throw new Error(
           `Scenario report entry ${id} canonicalState must be T3-sourced.`
         );
       const operations = scenario.operations;
-      if (!Array.isArray(operations) || operations.length === 0)
+      if (
+        applicability === "required" &&
+        (!Array.isArray(operations) || operations.length === 0)
+      )
         throw new Error(
           `Scenario report entry ${id} operations must be non-empty.`
         );
-      const decodedOperations = operations.map((operation, operationIndex) =>
-        readScenarioOperation(operation, id, operationIndex)
-      );
+      if (operations !== undefined && !Array.isArray(operations))
+        throw new Error(
+          `Scenario report entry ${id} operations must be an array.`
+        );
+      const decodedOperations = Array.isArray(operations)
+        ? operations.map((operation, operationIndex) =>
+            readScenarioOperation(operation, id, operationIndex)
+          )
+        : [];
       const observedEventTypes = scenario.observedEventTypes;
       if (
         !Array.isArray(observedEventTypes) ||
@@ -517,7 +531,11 @@ export function decodeScenarioReport(value: unknown): ScenarioReport {
         throw new Error(
           `Scenario report entry ${id} failures must be string[].`
         );
-      if (scenario.passed === true && failures.length > 0)
+      if (
+        applicability === "required" &&
+        scenario.passed === true &&
+        failures.length > 0
+      )
         throw new Error(
           `Scenario report entry ${id} is passed but contains failures.`
         );
@@ -566,10 +584,6 @@ export function validateCompletedScenarioReport(
       throw new Error(`Scenario report contains unexpected ${scenario.id}.`);
     if (scenario.applicability === "required" && !scenario.passed)
       throw new Error(`Scenario report contains failed ${scenario.id}.`);
-    if (scenario.applicability === "not-applicable" && !scenario.passed)
-      throw new Error(
-        `Scenario report contains a failed not-applicable ${scenario.id}.`
-      );
   }
   for (const id of required) {
     if (!ids.has(id)) throw new Error(`Scenario report is missing ${id}.`);

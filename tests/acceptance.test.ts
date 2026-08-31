@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 
-import { assertAcceptanceReport } from "../tools/contract/acceptance.ts";
+import {
+  assertAcceptanceReport,
+  assertEquivalentScenarioReports,
+} from "../tools/contract/acceptance.ts";
 import { REQUIRED_REFERENCE_SCENARIOS } from "../tools/contract/reference-artifacts.ts";
 
 function report(status: "completed" | "partial" = "completed", passed = true) {
@@ -43,5 +46,35 @@ describe("shim acceptance gate", () => {
       source: "scenario-runner-derived",
     };
     expect(() => assertAcceptanceReport(derived)).toThrow("not T3-sourced");
+  });
+
+  test("compares operations, events, and T3 canonical state", () => {
+    const reference = report();
+    const shim = report();
+    expect(() =>
+      assertEquivalentScenarioReports(reference, shim)
+    ).not.toThrow();
+
+    Object.assign(shim.scenarios[0].operations[0], { body: "{}" });
+    expect(() => assertEquivalentScenarioReports(reference, shim)).toThrow(
+      "operation 1 differs for C01"
+    );
+  });
+
+  test("does not treat null response bodies as wildcards", () => {
+    const reference = report();
+    const shim = report();
+    Object.assign(shim.scenarios[0].operations[0], { body: "null" });
+    expect(() => assertEquivalentScenarioReports(reference, shim)).toThrow(
+      "operation 1 differs for C01"
+    );
+  });
+
+  test("fails closed when a matrix normalization rule is present", () => {
+    expect(() =>
+      assertEquivalentScenarioReports(report(), report(), [
+        { id: "OC-T3-0001", normalization: ["timestamp"] },
+      ])
+    ).toThrow("normalization is not implemented");
   });
 });

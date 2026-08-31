@@ -131,9 +131,14 @@ function operationMatches(
     record.request.path !== operation.path
   )
     return false;
-  if (operation.status === null) return record.response === undefined;
+  if (operation.status === null)
+    return (
+      record.response === undefined && record.body.response === operation.body
+    );
   if (record.response?.status !== operation.status) return false;
-  return operation.body === null || record.body.response === operation.body;
+  // `null` is an observed empty/unavailable response body, never a wildcard.
+  // A reported operation must match the capture's body exactly.
+  return record.body.response === operation.body;
 }
 
 export function validateScenarioOperations(

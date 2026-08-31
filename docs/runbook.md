@@ -91,11 +91,16 @@ Run the shim acceptance gate against a running `pi-opencode-server` (the same he
 ```sh
 SHIM_ACCEPTANCE_TARGET=http://127.0.0.1:4096 \
 SHIM_ACCEPTANCE_OUTPUT=artifacts/runs/shim-acceptance.json \
+CORPUS_ID=<manifest-corpus-id> \
+REFERENCE_MANIFEST=artifacts/runs/<corpus>.reference.json \
+SHIM_ACCEPTANCE_T3_CWD=/path/to/pinned/t3code \
+SHIM_ACCEPTANCE_T3_KIND=stock-t3-opencode-adapter \
+SHIM_ACCEPTANCE_T3_ARGV='["pnpm","test:opencode-adapter"]' \
 SCENARIO_BARRIER_URL=http://127.0.0.1:<barrier-port> \
 bun run contract:acceptance
 ```
 
-The gate requires a frozen matrix, rejects partial or failed scenarios, and verifies the referenced reference manifest and corpus identity before running.
+The gate requires a frozen matrix, verifies the referenced reference manifest and corpus identity, and launches the stock T3 harness with the shim URL injected as `OPENCODE_BASE_URL`. The harness must write the complete T3-sourced scenario report to `SCENARIO_OUTPUT`; the gate rejects stale, partial, failed, or mismatched reports. Until matrix normalization rules are implemented, rows requiring normalization fail closed instead of being compared incorrectly.
 
 ## Maintain evidence
 

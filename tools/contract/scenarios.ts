@@ -1,4 +1,5 @@
 import { Redactor } from "./recorder.ts";
+import { REQUIRED_REFERENCE_SCENARIOS } from "./reference-artifacts.ts";
 
 interface OperationResult {
   readonly body: string | null;
@@ -19,6 +20,7 @@ export interface ScenarioResult {
   readonly observedEventTypes: readonly string[];
   readonly passed: boolean;
   readonly sessionId?: string;
+  readonly skipReason?: string;
 }
 
 type ScenarioResultInput = Omit<
@@ -62,6 +64,8 @@ export interface ScenarioOptions {
   readonly barrier?: ScenarioBarrier;
   readonly runId?: string;
 }
+
+const SCENARIO_IDS = REQUIRED_REFERENCE_SCENARIOS;
 
 interface RequestContext {
   readonly runId: string;
@@ -363,7 +367,7 @@ function finalizeScenarios(
   results: readonly ScenarioResultInput[],
   barriersAvailable: boolean
 ): readonly ScenarioResult[] {
-  return results.map((scenario) => {
+  const finalized = results.map((scenario) => {
     const failures: string[] = [];
     const any2xx = (status: number): boolean => status >= 200 && status < 300;
     const check = (
@@ -486,6 +490,24 @@ function finalizeScenarios(
       passed: failures.length === 0,
     };
   });
+
+  const observed = new Set(finalized.map((scenario) => scenario.id));
+  const notApplicable = SCENARIO_IDS.filter((id) => !observed.has(id)).map(
+    (id): ScenarioResult => ({
+      applicability: "not-applicable",
+      canonicalState: { source: "not-applicable" },
+      declaredState: { source: "scenario-runner", scenario: id },
+      expectedTerminal: "scenario is not applicable to the current driver",
+      failures: [],
+      id,
+      observedEventTypes: [],
+      operations: [],
+      passed: true,
+      skipReason:
+        "The local raw-fetch driver does not exercise this stock-T3 scenario.",
+    })
+  );
+  return [...finalized, ...notApplicable];
 }
 
 export async function runScenarios(

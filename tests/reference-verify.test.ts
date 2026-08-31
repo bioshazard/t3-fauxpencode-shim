@@ -5,7 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { REQUIRED_REFERENCE_SCENARIOS } from "../tools/contract/reference-artifacts.ts";
-import { verifyReferenceArtifacts } from "../tools/contract/reference-verify.ts";
+import type { ScenarioReport } from "../tools/contract/reference-artifacts.ts";
+import {
+  validateScenarioOperations,
+  verifyReferenceArtifacts,
+} from "../tools/contract/reference-verify.ts";
 
 const PINNED_CORPUS = "t3code-9b2d0431-opencode-9f69463f-pi-0.84.4";
 
@@ -60,13 +64,30 @@ function provenance(): Record<string, unknown> {
 
 function captureRecord(
   scenario = "C01",
-  sequence = 1
-): Record<string, unknown> {
+  sequence = 1,
+  response: string | null = "{}"
+): {
+  readonly body: {
+    readonly response: string | null;
+    readonly [key: string]: unknown;
+  };
+  readonly correlation: Readonly<Record<string, string>>;
+  readonly request: {
+    readonly method: string;
+    readonly path: string;
+    readonly [key: string]: unknown;
+  };
+  readonly response: {
+    readonly status: number;
+    readonly [key: string]: unknown;
+  };
+  readonly [key: string]: unknown;
+} {
   return {
     body: {
       request: null,
       requestTruncated: false,
-      response: "{}",
+      response,
       responseTruncated: false,
     },
     connection: {
@@ -86,7 +107,36 @@ function captureRecord(
   };
 }
 
+function operationReport(body: string | null): ScenarioReport {
+  return {
+    scenarios: [
+      {
+        ...scenarioEntry("C01"),
+        operations: [{ body, method: "GET", path: "/", status: 200 }],
+      },
+    ],
+  } as unknown as ScenarioReport;
+}
+
 describe("reference corpus verification", () => {
+  test("treats a null operation body as an exact empty-body observation", () => {
+    expect(() =>
+      validateScenarioOperations(operationReport(null), [
+        captureRecord("C01", 1, "{}"),
+      ])
+    ).toThrow("operation 1");
+    expect(() =>
+      validateScenarioOperations(operationReport("{}"), [
+        captureRecord("C01", 1, null),
+      ])
+    ).toThrow("operation 1");
+    expect(() =>
+      validateScenarioOperations(operationReport(null), [
+        captureRecord("C01", 1, null),
+      ])
+    ).not.toThrow();
+  });
+
   test("verifies a passed manifest and detects tampering", async () => {
     const root = await mkdtemp(join(tmpdir(), "reference-verify-"));
     const capturePath = join(root, "capture.jsonl");

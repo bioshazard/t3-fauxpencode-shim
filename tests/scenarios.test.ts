@@ -122,7 +122,20 @@ describe("headless contract scenarios", () => {
         "C11",
         "C18",
         "C17",
+        "C07",
+        "C08",
+        "C09",
+        "C10",
+        "C12",
+        "C15",
+        "C16",
+        "C19",
       ]);
+      expect(
+        report.scenarios
+          .filter((scenario) => scenario.applicability === "not-applicable")
+          .map((scenario) => scenario.id)
+      ).toEqual(["C07", "C08", "C09", "C10", "C12", "C15", "C16", "C19"]);
       expect(
         report.scenarios.find((scenario) => scenario.id === "C06")
           ?.observedEventTypes

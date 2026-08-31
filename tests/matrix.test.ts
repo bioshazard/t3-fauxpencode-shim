@@ -1,4 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import type { JsonValue } from "../src/types.ts";
 import {
@@ -6,7 +10,150 @@ import {
   decodeMatrix,
   loadMatrix,
   type Matrix,
+  validateMatrixEvidence,
 } from "../tools/contract/matrix.ts";
+import { REQUIRED_REFERENCE_SCENARIOS } from "../tools/contract/reference-artifacts.ts";
+import type { ReferenceProvenance } from "../tools/contract/reference-artifacts.ts";
+
+const PINNED_CORPUS = "t3code-9b2d0431-opencode-9f69463f-pi-0.84.4";
+
+function digest(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function provenance(): ReferenceProvenance {
+  return {
+    model: { fixture: "fixture", model: "model", provider: "provider" },
+    runtime: {
+      architecture: "arm64",
+      nodeVersion: "v24.13.1",
+      operatingSystem: "darwin",
+      packageManager: "pnpm@11.10.0",
+    },
+    subjects: {
+      openCode: {
+        package: "@opencode-ai/sdk",
+        packageManager: "bun@1.3.14",
+        packageVersion: "1.18.25",
+        repository: "https://github.com/anomalyco/opencode.git",
+      },
+      pi: {
+        package: "@earendil-works/pi-coding-agent",
+        packageVersion: "0.84.4",
+        repository: "https://github.com/earendil-works/pi.git",
+      },
+      t3Code: {
+        package: "t3",
+        packageManager: "pnpm@11.10.0",
+        packageVersion: "0.0.37",
+        repository: "https://github.com/pingdotgg/t3code.git",
+      },
+    },
+  };
+}
+
+function captureRecord(
+  scenario: string,
+  sequence: number
+): Record<string, unknown> {
+  return {
+    body: {
+      request: null,
+      requestTruncated: false,
+      response: "{}",
+      responseTruncated: false,
+    },
+    connection: {
+      closedAt: "2026-08-31T12:00:00.000Z",
+      reason: "normal",
+      state: "closed",
+    },
+    correlation: {
+      "x-contract-run-id": "run",
+      "x-contract-scenario": scenario,
+    },
+    durationMs: 1,
+    request: { headers: {}, method: "GET", path: "/", query: {} },
+    response: { headers: {}, status: 200 },
+    sequence,
+    startedAt: "2026-08-31T12:00:00.000Z",
+  };
+}
+
+function scenarioEntry(id: string): Record<string, unknown> {
+  return {
+    applicability: "required",
+    canonicalState: { id, source: "t3" },
+    declaredState: { id, source: "fixture" },
+    expectedTerminal: "done",
+    failures: [],
+    id,
+    observedEventTypes: [],
+    operations: [{ body: "{}", method: "GET", path: "/", status: 200 }],
+    passed: true,
+  };
+}
+
+async function verifiedFixture() {
+  const root = await mkdtemp(join(tmpdir(), "matrix-evidence-"));
+  const capturePath = join(root, "capture.jsonl");
+  const scenarioPath = join(root, "scenarios.json");
+  const capture = `${REQUIRED_REFERENCE_SCENARIOS.map((id, index) =>
+    JSON.stringify(captureRecord(id, index + 1))
+  ).join("\n")}\n`;
+  const scenario = JSON.stringify({
+    corpusId: PINNED_CORPUS,
+    runId: "run",
+    scenarios: REQUIRED_REFERENCE_SCENARIOS.map(scenarioEntry),
+    status: "completed",
+  });
+  await Bun.write(capturePath, capture);
+  await Bun.write(scenarioPath, scenario);
+  return {
+    capturePath,
+    manifest: {
+      capturePath,
+      captureSha256: digest(capture),
+      client: "stock-t3-opencode-adapter" as const,
+      corpusId: PINNED_CORPUS,
+      generatedAt: "2026-08-31T12:00:00.000Z",
+      openCodeCommit: "9f69463f1d556af2b5b51d2efa1c04f5f544f911",
+      opencodeArgv: ["opencode", "serve"],
+      provenance: provenance(),
+      runId: "run",
+      scenarioOutput: scenarioPath,
+      scenarioSha256: digest(scenario),
+      status: "passed" as const,
+      t3Argv: ["pnpm", "test"],
+      t3Commit: "9b2d04317c68233782e0630464ac86d77d0686f3",
+    },
+  };
+}
+
+function frozenRow(evidence: JsonValue[]): Matrix {
+  return {
+    corpusId: PINNED_CORPUS,
+    rows: [
+      {
+        confidence: "observed",
+        errorBehavior: "none",
+        evidence,
+        events: [],
+        id: "OC-T3-0001",
+        normalization: [],
+        operation: "health",
+        request: { method: "GET", path: "/" },
+        response: { status: 200 },
+        stateEffect: {},
+        scenario: "C01",
+        support: "required",
+        trigger: "startup",
+      },
+    ],
+    schemaVersion: 1,
+    status: "frozen",
+  };
+}
 
 describe("contract matrix", () => {
   test("starts explicitly pending until a reference corpus exists", async () => {
@@ -53,5 +200,50 @@ describe("contract matrix", () => {
       "does not match reference corpus"
     );
     expect(() => assertMatrixCorpus(matrix, "corpus-a")).not.toThrow();
+  });
+
+  test("binds required rows to raw capture and T3 source evidence", async () => {
+    const { manifest } = await verifiedFixture();
+    await expect(
+      validateMatrixEvidence(
+        frozenRow(["raw:C01#1", "t3:OpenCodeAdapter"]),
+        manifest
+      )
+    ).resolves.toBeUndefined();
+  });
+
+  test("rejects arbitrary evidence strings in frozen required rows", async () => {
+    const { manifest } = await verifiedFixture();
+    await expect(
+      validateMatrixEvidence(frozenRow(["capture", "source"]), manifest)
+    ).rejects.toThrow("invalid evidence");
+  });
+
+  test("rejects raw evidence from another scenario", async () => {
+    const { manifest } = await verifiedFixture();
+    await expect(
+      validateMatrixEvidence(
+        frozenRow(["raw:C02#2", "t3:OpenCodeAdapter"]),
+        manifest
+      )
+    ).rejects.toThrow("does not reference C01");
+  });
+
+  test("rejects frozen rows without normalized expected behavior", async () => {
+    const { manifest } = await verifiedFixture();
+    const row = frozenRow(["raw:C01#1", "t3:OpenCodeAdapter"]);
+    (row.rows[0] as Record<string, JsonValue>).response = {};
+    await expect(validateMatrixEvidence(row, manifest)).rejects.toThrow(
+      "normalized request and response behavior"
+    );
+  });
+
+  test("rejects normalized response status that differs from capture", async () => {
+    const { manifest } = await verifiedFixture();
+    const row = frozenRow(["raw:C01#1", "t3:OpenCodeAdapter"]);
+    (row.rows[0] as Record<string, JsonValue>).response = { status: 201 };
+    await expect(validateMatrixEvidence(row, manifest)).rejects.toThrow(
+      "normalized response does not match"
+    );
   });
 });

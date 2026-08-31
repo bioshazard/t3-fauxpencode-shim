@@ -149,6 +149,32 @@ describe("reference artifact validation", () => {
     ).toThrow("need skipReason");
   });
 
+  test("does not require state or operations for not-applicable scenarios", () => {
+    const scenarios = (
+      report().scenarios as Array<Record<string, unknown>>
+    ).map((entry) =>
+      entry.id === "C07"
+        ? {
+            id: "C07",
+            applicability: "not-applicable",
+            expectedTerminal: "reasoning scenario skipped",
+            failures: [],
+            observedEventTypes: [],
+            passed: false,
+            skipReason: "deterministic model emits no reasoning parts",
+          }
+        : entry
+    );
+    const decoded = validateCompletedScenarioReport(report({ scenarios }), {
+      corpusId: "corpus",
+      runId: "run",
+    });
+    const skipped = decoded.scenarios.find((scenario) => scenario.id === "C07");
+    expect(skipped?.canonicalState).toBeUndefined();
+    expect(skipped?.declaredState).toBeUndefined();
+    expect(skipped?.operations).toEqual([]);
+  });
+
   test("rejects forged scenario evidence", () => {
     const scenarios = [
       ...(report().scenarios as Array<Record<string, unknown>>),
