@@ -42,6 +42,14 @@ describe("contract recorder", () => {
       expect(record.request.path).toBe("/event");
       expect(record.response.status).toBe(200);
       expect(record.body.response).toContain("event: message");
+      expect(record.connection.state).toBe("closed");
+      expect(record.sse.scope).toBe("global");
+      expect(record.sse.reconnect).toBe(1);
+      expect(record.sse.frames[0]).toMatchObject({
+        event: "message",
+        parsed: { text: "ok" },
+        raw: 'event: message\ndata: {"text":"ok"}\n\n',
+      });
     } finally {
       upstream.stop();
       await Bun.file(output).delete();

@@ -1,6 +1,8 @@
 import { appendFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 
+import type { JsonValue } from "../../src/types.ts";
+
 export interface CaptureConfig {
   readonly maxBodyBytes: number;
   readonly output: string;
@@ -13,6 +15,10 @@ export interface CaptureRecord {
     readonly requestTruncated: boolean;
     readonly response: string | null;
     readonly responseTruncated: boolean;
+  };
+  readonly connection: {
+    readonly closedAt?: string;
+    readonly state: "closed" | "error";
   };
   readonly durationMs: number;
   readonly request: {
@@ -27,6 +33,16 @@ export interface CaptureRecord {
   };
   readonly sequence: number;
   readonly startedAt: string;
+  readonly sse?: {
+    readonly frames: readonly {
+      readonly data: string;
+      readonly event: string | null;
+      readonly parsed?: JsonValue;
+      readonly raw: string;
+    }[];
+    readonly reconnect: number;
+    readonly scope: "global" | "session" | "unknown";
+  };
   readonly transportError?: string;
 }
 
@@ -69,6 +85,52 @@ function bodyText(
 function targetURL(target: URL, requestURL: URL): URL {
   const result = new URL(requestURL.pathname + requestURL.search, target);
   return result;
+}
+
+function sseScope(path: string): "global" | "session" | "unknown" {
+  if (path === "/event" || path === "/global/event") return "global";
+  if (/^\/session\/[^/]+\/event$/u.test(path)) return "session";
+  return "unknown";
+}
+
+function parseSseFrames(body: string, path: string): CaptureRecord["sse"] {
+  const frames: Array<{
+    data: string;
+    event: string | null;
+    parsed?: JsonValue;
+    raw: string;
+  }> = [];
+  let offset = 0;
+  while (offset < body.length) {
+    const lf = body.indexOf("\n\n", offset);
+    const crlf = body.indexOf("\r\n\r\n", offset);
+    const boundary = lf < 0 ? crlf : crlf < 0 ? lf : Math.min(lf, crlf);
+    if (boundary < 0) break;
+    const separatorLength = body.startsWith("\r\n", boundary + 2) ? 4 : 2;
+    const raw = body.slice(offset, boundary + separatorLength);
+    const payload = body.slice(offset, boundary);
+    let event: string | null = null;
+    const data: string[] = [];
+    for (const line of payload.split(/\r?\n/u)) {
+      if (line.startsWith("event:")) event = line.slice(6).trim();
+      if (line.startsWith("data:")) data.push(line.slice(5).trimStart());
+    }
+    const joined = data.join("\n");
+    let parsed: JsonValue | undefined;
+    try {
+      parsed = JSON.parse(joined) as JsonValue;
+    } catch {
+      parsed = undefined;
+    }
+    frames.push({
+      data: joined,
+      event,
+      ...(parsed === undefined ? {} : { parsed }),
+      raw,
+    });
+    offset = boundary + separatorLength;
+  }
+  return { frames, reconnect: 1, scope: sseScope(path) };
 }
 
 export class Redactor {
@@ -217,6 +279,7 @@ export function createCaptureHandler(
       },
       sequence,
       startedAt,
+      connection: { state: "error" },
     } satisfies CaptureRecord;
 
     try {
@@ -245,6 +308,7 @@ export function createCaptureHandler(
             headers: store.redactHeaders(upstream.headers),
             status: upstream.status,
           },
+          connection: { state: "error" },
           transportError:
             error instanceof Error ? error.message : "response capture failed",
         });
@@ -311,18 +375,27 @@ async function recordResponse(
     }
   }
   const responseBody = bodyText(responseBytes, config.maxBodyBytes);
+  const redactedResponse = store.redact(responseBody.text);
+  const contentType = upstream.headers.get("content-type") ?? "";
   const record: CaptureRecord = {
     ...baseRecord,
     body: {
       ...baseRecord.body,
-      response: store.redact(responseBody.text),
+      response: redactedResponse,
       responseTruncated: responseBody.truncated || responseTruncated,
+    },
+    connection: {
+      closedAt: new Date().toISOString(),
+      state: "closed",
     },
     durationMs: Math.round(performance.now() - started),
     response: {
       headers: store.redactHeaders(upstream.headers),
       status: upstream.status,
     },
+    ...(contentType.includes("text/event-stream")
+      ? { sse: parseSseFrames(redactedResponse, baseRecord.request.path) }
+      : {}),
   };
   await store.append(record);
 }
