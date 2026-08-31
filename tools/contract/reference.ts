@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
@@ -5,6 +6,7 @@ import { loadCapture } from "./capture.ts";
 import { createCaptureHandler, makeCaptureConfig } from "./recorder.ts";
 import {
   REQUIRED_REFERENCE_SCENARIOS,
+  decodeReferenceManifest,
   type ReferenceManifest,
   validateCompletedScenarioReport,
 } from "./reference-artifacts.ts";
@@ -93,7 +95,7 @@ async function assertCleanCheckout(root: string, name: string): Promise<void> {
 async function verifyPinnedCheckouts(
   t3Root: string,
   openCodeRoot: string
-): Promise<void> {
+): Promise<{ readonly openCodeCommit: string; readonly t3Commit: string }> {
   const manifest = (await Bun.file(
     new URL("../../contracts/manifest.json", import.meta.url)
   ).json()) as unknown;
@@ -122,6 +124,12 @@ async function verifyPinnedCheckouts(
     throw new Error(
       `OpenCode checkout is ${actualOpenCode}, expected pinned ${openCode}.`
     );
+  return { openCodeCommit: actualOpenCode, t3Commit: actualT3 };
+}
+
+async function sha256File(path: string): Promise<string> {
+  const bytes = await Bun.file(path).arrayBuffer();
+  return createHash("sha256").update(Buffer.from(bytes)).digest("hex");
 }
 
 async function validateScenarioOutput(
@@ -216,7 +224,10 @@ async function runReference(
 ): Promise<ReferenceManifest> {
   assertDuration(config.healthTimeoutMs, "REFERENCE_HEALTH_TIMEOUT_MS");
   assertDuration(config.timeoutMs, "REFERENCE_TIMEOUT_MS");
-  await verifyPinnedCheckouts(config.t3Root, config.openCodeRoot);
+  const pinned = await verifyPinnedCheckouts(
+    config.t3Root,
+    config.openCodeRoot
+  );
   const opencodeBin = resolve(config.openCodeRoot, config.opencodeBin);
   if (!opencodeBin.startsWith(`${resolve(config.openCodeRoot)}/`))
     throw new Error(
@@ -264,18 +275,25 @@ async function runReference(
     SCENARIO_OUTPUT: scenarioOutput,
   };
   let status: "failed" | "passed" = "failed";
+  let captureSha256: string | undefined;
+  let scenarioSha256: string | undefined;
   const writeManifest = async (): Promise<ReferenceManifest> => {
     const manifest: ReferenceManifest = {
+      ...(captureSha256 === undefined ? {} : { captureSha256 }),
       capturePath: config.capturePath,
       client: "stock-t3-opencode-adapter",
       corpusId: config.corpusId,
       generatedAt: new Date().toISOString(),
+      openCodeCommit: pinned.openCodeCommit,
       opencodeArgv,
       runId,
+      ...(scenarioSha256 === undefined ? {} : { scenarioSha256 }),
       scenarioOutput,
       status,
+      t3Commit: pinned.t3Commit,
       t3Argv: config.t3Argv,
     };
+    decodeReferenceManifest(manifest);
     await mkdir(dirname(config.outputPath), { recursive: true });
     await Bun.write(
       config.outputPath,
@@ -341,6 +359,8 @@ async function runReference(
       runId,
       startedAtMs
     );
+    captureSha256 = await sha256File(config.capturePath);
+    scenarioSha256 = await sha256File(scenarioOutput);
     status = "passed";
   } catch (error) {
     await writeManifest();

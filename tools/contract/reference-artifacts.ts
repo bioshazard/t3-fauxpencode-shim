@@ -4,14 +4,18 @@ export const REQUIRED_REFERENCE_SCENARIOS = Array.from(
 );
 
 export interface ReferenceManifest {
+  readonly captureSha256?: string;
   readonly capturePath: string;
   readonly client: "stock-t3-opencode-adapter";
   readonly corpusId: string;
   readonly generatedAt: string;
+  readonly openCodeCommit: string;
   readonly opencodeArgv: readonly string[];
   readonly runId: string;
+  readonly scenarioSha256?: string;
   readonly scenarioOutput?: string;
   readonly status: "failed" | "passed";
+  readonly t3Commit: string;
   readonly t3Argv: readonly string[];
 }
 
@@ -64,6 +68,35 @@ function argv(
   return result;
 }
 
+function commit(
+  value: { readonly [key: string]: unknown },
+  key: string
+): string {
+  const result = requiredString(
+    value,
+    key,
+    `Reference manifest ${key} is required.`
+  );
+  if (!/^[0-9a-f]{40}$/u.test(result))
+    throw new Error(`Reference manifest ${key} must be a 40-character commit.`);
+  return result;
+}
+
+function hash(
+  value: { readonly [key: string]: unknown },
+  key: string
+): string | undefined {
+  if (value[key] === undefined) return undefined;
+  const result = requiredString(
+    value,
+    key,
+    `Reference manifest ${key} must be non-empty.`
+  );
+  if (!/^[0-9a-f]{64}$/u.test(result))
+    throw new Error(`Reference manifest ${key} must be a SHA-256 hex digest.`);
+  return result;
+}
+
 export function decodeReferenceManifest(value: unknown): ReferenceManifest {
   if (!isRecord(value))
     throw new Error("Reference manifest must be an object.");
@@ -80,7 +113,15 @@ export function decodeReferenceManifest(value: unknown): ReferenceManifest {
   );
   if (Number.isNaN(Date.parse(generatedAt)))
     throw new Error("Reference manifest generatedAt must be an ISO timestamp.");
+  const captureSha256 = hash(value, "captureSha256");
+  const scenarioSha256 = hash(value, "scenarioSha256");
+  if (
+    status === "passed" &&
+    (captureSha256 === undefined || scenarioSha256 === undefined)
+  )
+    throw new Error("Passed reference manifests need artifact checksums.");
   return {
+    ...(captureSha256 === undefined ? {} : { captureSha256 }),
     capturePath: requiredString(
       value,
       "capturePath",
@@ -93,12 +134,14 @@ export function decodeReferenceManifest(value: unknown): ReferenceManifest {
       "Reference manifest corpusId is required."
     ),
     generatedAt,
+    openCodeCommit: commit(value, "openCodeCommit"),
     opencodeArgv: argv(value, "opencodeArgv"),
     runId: requiredString(
       value,
       "runId",
       "Reference manifest runId is required."
     ),
+    ...(scenarioSha256 === undefined ? {} : { scenarioSha256 }),
     ...(value.scenarioOutput === undefined
       ? {}
       : {
@@ -109,6 +152,7 @@ export function decodeReferenceManifest(value: unknown): ReferenceManifest {
           ),
         }),
     status,
+    t3Commit: commit(value, "t3Commit"),
     t3Argv: argv(value, "t3Argv"),
   };
 }

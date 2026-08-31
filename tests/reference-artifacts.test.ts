@@ -71,12 +71,17 @@ describe("reference artifact validation", () => {
     expect(
       decodeReferenceManifest({
         capturePath: "artifacts/raw/corpus.jsonl",
+        captureSha256: "a".repeat(64),
         client: "stock-t3-opencode-adapter",
         corpusId: "corpus",
         generatedAt: "2026-08-31T12:00:00.000Z",
+        openCodeCommit: "b".repeat(40),
         opencodeArgv: ["opencode", "serve"],
         runId: "run",
+        scenarioSha256: "c".repeat(64),
+        scenarioOutput: "artifacts/runs/corpus.json",
         status: "passed",
+        t3Commit: "d".repeat(40),
         t3Argv: ["pnpm", "test"],
       }).status
     ).toBe("passed");
@@ -86,9 +91,13 @@ describe("reference artifact validation", () => {
         client: "raw-fetch-driver",
         corpusId: "corpus",
         generatedAt: "2026-08-31T12:00:00.000Z",
+        openCodeCommit: "b".repeat(40),
         opencodeArgv: ["opencode"],
         runId: "run",
         status: "passed",
+        t3Commit: "d".repeat(40),
+        captureSha256: "a".repeat(64),
+        scenarioSha256: "c".repeat(64),
         t3Argv: ["pnpm", "test"],
       })
     ).toThrow("client is invalid");
