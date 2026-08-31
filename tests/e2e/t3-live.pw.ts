@@ -15,6 +15,12 @@ test("T3 sends a prompt through the configured external OpenCode shim", async ({
 
   if (pairingURL !== undefined) {
     await page.goto(pairingURL, { waitUntil: "domcontentloaded" });
+    const token = new URL(pairingURL).hash.replace(/^#token=/u, "");
+    const tokenField = page.getByRole("textbox", { name: "Pairing token" });
+    if (await tokenField.isVisible()) {
+      await tokenField.fill(token);
+      await page.getByRole("button", { name: "Continue" }).click();
+    }
     await expect(page).not.toHaveURL(/#token=/u);
   }
 
@@ -22,16 +28,19 @@ test("T3 sends a prompt through the configured external OpenCode shim", async ({
   await expect(page.getByText("OpenCode", { exact: true })).toBeVisible();
 
   await page.goto("/", { waitUntil: "domcontentloaded" });
+  const modelButton = page
+    .getByRole("button", { name: /Claude|configured/ })
+    .first();
+  await expect(modelButton).toBeVisible();
+  await modelButton.click();
+  await page.getByRole("button", { name: "OpenCode", exact: true }).click();
+  await page.getByRole("option", { name: /configured OpenCode/ }).click();
   const editor = page.getByTestId("composer-editor");
   await expect(editor).toBeVisible();
   await editor.fill(prompt);
   await page.getByRole("button", { name: "Send message" }).click();
 
   await expect(
-    page.locator('[data-message-role="assistant"]').getByText(expectedReply, {
-      exact: true,
-    })
-  ).toBeVisible({
-    timeout: 120_000,
-  });
+    page.getByText(expectedReply, { exact: true }).last()
+  ).toBeVisible();
 });

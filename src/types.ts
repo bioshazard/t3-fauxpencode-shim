@@ -134,13 +134,62 @@ export interface SessionSnapshot {
 export interface EventProperties {
   readonly delta?: string;
   readonly error?: string;
+  readonly info?: OpenCodeMessageInfo;
   readonly isError?: boolean;
   readonly message?: FacadeMessage;
   readonly messageId?: string;
+  readonly part?: OpenCodeTextPart;
+  readonly sessionID?: string;
   readonly sessionStatus?: SessionStatus;
+  readonly status?: OpenCodeSessionStatus;
+  readonly time?: number;
   readonly toolCallId?: string;
   readonly toolName?: string;
 }
+
+export interface OpenCodeMessageInfo {
+  readonly agent: string;
+  readonly cost?: number;
+  readonly finish?: string;
+  readonly id: string;
+  readonly mode?: string;
+  readonly model?: {
+    readonly modelID: string;
+    readonly providerID: string;
+  };
+  readonly modelID?: string;
+  readonly parentID?: string;
+  readonly path?: {
+    readonly cwd: string;
+    readonly root: string;
+  };
+  readonly providerID?: string;
+  readonly role: "assistant" | "user";
+  readonly sessionID: string;
+  readonly time: {
+    readonly completed?: number;
+    readonly created: number;
+  };
+  readonly tokens?: {
+    readonly cache: { readonly read: number; readonly write: number };
+    readonly input: number;
+    readonly output: number;
+    readonly reasoning: number;
+  };
+}
+
+export interface OpenCodeTextPart {
+  readonly id: string;
+  readonly messageID: string;
+  readonly sessionID: string;
+  readonly text: string;
+  readonly time: { readonly end?: number; readonly start: number };
+  readonly type: "text" | "reasoning";
+}
+
+export type OpenCodeSessionStatus =
+  | { readonly type: "busy" }
+  | { readonly type: "idle" };
 
 export interface FacadeEvent {
   readonly id: string;

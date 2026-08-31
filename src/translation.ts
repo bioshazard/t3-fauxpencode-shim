@@ -11,6 +11,8 @@ import type {
   FacadeMessage,
   FacadePart,
   JsonValue,
+  OpenCodeMessageInfo,
+  OpenCodeTextPart,
   SessionStatus,
 } from "./types.ts";
 
@@ -115,21 +117,84 @@ function sessionEvent(
   type: string,
   properties: FacadeEvent["properties"] = {}
 ): FacadeEvent {
-  return { id: crypto.randomUUID(), properties, sessionID, type };
-}
-
-function latestMessage(
-  sessionID: string,
-  messages: readonly AgentMessage[],
-  messageIds: ReadonlyMap<AgentMessage, string>
-): FacadeMessage | undefined {
-  const translated = translateMessages(sessionID, messages, messageIds);
-  return translated[translated.length - 1];
+  return {
+    id: crypto.randomUUID(),
+    properties: { ...properties, sessionID },
+    sessionID,
+    type,
+  };
 }
 
 function statusEvent(sessionID: string, status: SessionStatus): FacadeEvent {
   return sessionEvent(sessionID, "session.status", {
-    sessionStatus: status,
+    status: { type: status === "running" ? "busy" : "idle" },
+  });
+}
+
+function messageInfo(
+  sessionID: string,
+  message: FacadeMessage
+): OpenCodeMessageInfo {
+  if (message.role === "user") {
+    return {
+      agent: "pi",
+      id: message.id,
+      model: { modelID: "pi", providerID: "pi" },
+      role: "user",
+      sessionID,
+      time: message.time,
+    };
+  }
+  return {
+    agent: "pi",
+    cost: 0,
+    ...(message.time.completed === undefined ? {} : { finish: "stop" }),
+    id: message.id,
+    mode: "all",
+    modelID: "pi",
+    parentID: "",
+    path: { cwd: "", root: "" },
+    providerID: "pi",
+    role: "assistant",
+    sessionID,
+    time: message.time,
+    tokens: {
+      cache: { read: 0, write: 0 },
+      input: 0,
+      output: 0,
+      reasoning: 0,
+    },
+  };
+}
+
+function messageUpdatedEvent(
+  sessionID: string,
+  message: FacadeMessage
+): FacadeEvent {
+  return sessionEvent(sessionID, "message.updated", {
+    info: messageInfo(sessionID, message),
+  });
+}
+
+function messagePartUpdatedEvent(
+  sessionID: string,
+  messageID: string,
+  contentIndex: number,
+  type: "text" | "reasoning",
+  text: string,
+  timestamp: number
+): FacadeEvent {
+  const part: OpenCodeTextPart = {
+    id: `${messageID}-part-${contentIndex + 1}`,
+    messageID,
+    sessionID,
+    text,
+    time: { start: timestamp },
+    type,
+  };
+  return sessionEvent(sessionID, "message.part.updated", {
+    part,
+    time: timestamp,
   });
 }
 
@@ -175,6 +240,15 @@ export function translateAgentEvent(
       return [statusEvent(sessionID, "idle")];
     case "agent_end":
       return [statusEvent(sessionID, event.willRetry ? "running" : "idle")];
+    case "message_start": {
+      const message = translateMessage(
+        sessionID,
+        messages.indexOf(event.message),
+        event.message,
+        messageIdOverrides
+      );
+      return message === null ? [] : [messageUpdatedEvent(sessionID, message)];
+    }
     case "message_update": {
       const update = event.assistantMessageEvent;
       if (
@@ -184,21 +258,30 @@ export function translateAgentEvent(
       ) {
         return [];
       }
+      const messageID = eventMessageId(
+        sessionID,
+        event.message,
+        messages,
+        messageIds,
+        messageIdOverrides
+      );
+      if (messageID === undefined || !("contentIndex" in update)) return [];
+      const contentIndex = update.contentIndex;
+      const partKey = `part:${messageID}:${contentIndex}:${update.type}`;
+      const text = (messageIds.get(partKey) ?? "") + update.delta;
+      messageIds.set(partKey, text);
       return [
-        sessionEvent(sessionID, "message.part.updated", {
-          delta: update.delta,
-          messageId: eventMessageId(
-            sessionID,
-            event.message,
-            messages,
-            messageIds,
-            messageIdOverrides
-          ),
-        }),
+        messagePartUpdatedEvent(
+          sessionID,
+          messageID,
+          contentIndex,
+          update.type === "thinking_delta" ? "reasoning" : "text",
+          text,
+          event.message.timestamp
+        ),
       ];
     }
     case "message_end": {
-      const message = latestMessage(sessionID, messages, messageIdOverrides);
       const messageId = eventMessageId(
         sessionID,
         event.message,
@@ -206,17 +289,19 @@ export function translateAgentEvent(
         messageIds,
         messageIdOverrides
       );
-      return message === undefined
-        ? []
-        : [
-            sessionEvent(sessionID, "message.completed", {
-              message:
-                messageId === undefined
-                  ? message
-                  : { ...message, id: messageId },
-              messageId: messageId ?? message.id,
-            }),
-          ];
+      const message = translateMessage(
+        sessionID,
+        messages.indexOf(event.message),
+        event.message,
+        messageIdOverrides
+      );
+      if (message === null) return [];
+      return [
+        messageUpdatedEvent(
+          sessionID,
+          messageId === undefined ? message : { ...message, id: messageId }
+        ),
+      ];
     }
     case "tool_execution_start":
       return [
@@ -234,23 +319,7 @@ export function translateAgentEvent(
         }),
       ];
     case "turn_end": {
-      const message = latestMessage(sessionID, messages, messageIdOverrides);
-      const messageId = eventMessageId(
-        sessionID,
-        event.message,
-        messages,
-        messageIds,
-        messageIdOverrides
-      );
-      return [
-        sessionEvent(sessionID, "turn.completed", {
-          message:
-            messageId === undefined || message === undefined
-              ? message
-              : { ...message, id: messageId },
-          messageId: messageId ?? message?.id,
-        }),
-      ];
+      return [];
     }
     default:
       return [];

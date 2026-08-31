@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { UserMessage } from "@earendil-works/pi-ai";
+import type { AssistantMessage, UserMessage } from "@earendil-works/pi-ai";
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 
 import { translateAgentEvent, translateMessages } from "../src/translation.ts";
@@ -31,7 +31,77 @@ describe("Pi message ID translation", () => {
       new Map(),
       overrides
     );
-    expect(translated[0]?.properties.messageId).toBe("msg_external");
-    expect(translated[0]?.properties.message?.id).toBe("msg_external");
+    expect(translated[0]?.type).toBe("message.updated");
+    expect(translated[0]?.properties.sessionID).toBe("thread");
+    expect(translated[0]?.properties.info?.id).toBe("msg_external");
+    expect(translated[0]?.properties.info?.role).toBe("user");
+  });
+
+  test("emits native OpenCode streaming events with cumulative text parts", () => {
+    const user: UserMessage = {
+      content: "hello",
+      role: "user",
+      timestamp: 1,
+    };
+    const assistant: AssistantMessage = {
+      content: [],
+      role: "assistant",
+      timestamp: 2,
+    } as unknown as AssistantMessage;
+    const messages: AgentMessage[] = [user, assistant];
+    const overrides = new Map<AgentMessage, string>([[user, "msg_external"]]);
+    const eventIds = new Map<string, string>();
+    const translated = (event: AgentSessionEvent) =>
+      translateAgentEvent("thread", event, messages, eventIds, overrides);
+
+    const busy = translated({ type: "agent_start" });
+    const userStart = translated({ type: "message_start", message: user });
+    const assistantStart = translated({
+      type: "message_start",
+      message: assistant,
+    });
+    const firstDelta = translated({
+      assistantMessageEvent: {
+        contentIndex: 0,
+        delta: "Hello",
+        partial: assistant,
+        type: "text_delta",
+      },
+      message: assistant,
+      type: "message_update",
+    });
+    const secondDelta = translated({
+      assistantMessageEvent: {
+        contentIndex: 0,
+        delta: " world",
+        partial: assistant,
+        type: "text_delta",
+      },
+      message: assistant,
+      type: "message_update",
+    });
+    const assistantEnd = translated({
+      type: "message_end",
+      message: assistant,
+    });
+    const idle = translated({ type: "agent_settled" });
+
+    expect(busy[0]?.properties.status).toEqual({ type: "busy" });
+    expect(userStart[0]?.properties.info?.id).toBe("msg_external");
+    expect(assistantStart[0]?.properties.info?.role).toBe("assistant");
+    expect(firstDelta[0]?.type).toBe("message.part.updated");
+    expect(firstDelta[0]?.properties.part).toMatchObject({
+      messageID: "thread-message-2",
+      sessionID: "thread",
+      text: "Hello",
+      type: "text",
+    });
+    expect(secondDelta[0]?.properties.part).toMatchObject({
+      id: firstDelta[0]?.properties.part?.id,
+      text: "Hello world",
+    });
+    expect(assistantEnd[0]?.type).toBe("message.updated");
+    expect(assistantEnd[0]?.properties.info?.id).toBe("thread-message-2");
+    expect(idle[0]?.properties.status).toEqual({ type: "idle" });
   });
 });

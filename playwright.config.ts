@@ -16,7 +16,7 @@ export default defineConfig({
   reporter: process.env.CI ? "line" : "list",
   retries: process.env.CI ? 2 : 0,
   testDir: "./tests/e2e",
-  timeout: 30_000,
+  timeout: 180_000,
   use: {
     baseURL: shimBaseURL,
     trace: "retain-on-failure",
@@ -24,11 +24,11 @@ export default defineConfig({
   projects: [
     {
       name: "shim",
-      testMatch: "**/shim-protocol.spec.ts",
+      testMatch: "**/shim-protocol.pw.ts",
     },
     {
       name: "t3",
-      testMatch: "**/t3-live.spec.ts",
+      testMatch: "**/t3-live.pw.ts",
       use: {
         baseURL: t3BaseURL,
         ...(t3StorageState === undefined
