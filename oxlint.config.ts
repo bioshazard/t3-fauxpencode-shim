@@ -1,6 +1,11 @@
 import { defineConfig } from "oxlint";
 
-const ignorePatterns = ["node_modules/**", "coverage/**", "artifacts/**"];
+const ignorePatterns = [
+  "node_modules/**",
+  "coverage/**",
+  "artifacts/**",
+  "dist/**",
+];
 
 export default defineConfig({
   ignorePatterns,

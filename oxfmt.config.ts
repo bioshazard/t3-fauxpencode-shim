@@ -8,5 +8,6 @@ export default defineConfig({
     "node_modules/**",
     "coverage/**",
     "artifacts/**",
+    "dist/**",
   ],
 });
