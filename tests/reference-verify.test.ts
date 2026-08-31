@@ -22,7 +22,7 @@ function scenarioEntry(id: string): Record<string, unknown> {
     failures: [],
     id,
     observedEventTypes: [],
-    operations: [{ body: null, method: "GET", path: "/", status: 200 }],
+    operations: [{ body: "{}", method: "GET", path: "/", status: 200 }],
     passed: true,
   };
 }

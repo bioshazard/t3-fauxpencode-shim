@@ -121,6 +121,7 @@ async function validatePinnedIdentity(
 function operationMatches(
   operation: ScenarioOperation,
   record: {
+    readonly body: { readonly response: string | null };
     readonly request: { readonly method: string; readonly path: string };
     readonly response?: { readonly status: number };
   }
@@ -131,13 +132,15 @@ function operationMatches(
   )
     return false;
   if (operation.status === null) return record.response === undefined;
-  return record.response?.status === operation.status;
+  if (record.response?.status !== operation.status) return false;
+  return operation.body === null || record.body.response === operation.body;
 }
 
 export function validateScenarioOperations(
   report: ScenarioReport,
   records: readonly {
     readonly correlation?: Readonly<Record<string, string>>;
+    readonly body: { readonly response: string | null };
     readonly request: { readonly method: string; readonly path: string };
     readonly response?: { readonly status: number };
   }[]
