@@ -237,7 +237,18 @@ export function createCaptureHandler(
         upstream,
         recordBody,
         started
-      );
+      ).catch(async (error: unknown) => {
+        await store.append({
+          ...baseRecord,
+          durationMs: Math.round(performance.now() - started),
+          response: {
+            headers: store.redactHeaders(upstream.headers),
+            status: upstream.status,
+          },
+          transportError:
+            error instanceof Error ? error.message : "response capture failed",
+        });
+      });
       return response;
     } catch (error) {
       const record: CaptureRecord = {

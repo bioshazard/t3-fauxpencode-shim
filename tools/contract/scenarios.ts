@@ -29,6 +29,11 @@ interface SseFrame {
   readonly event: string | null;
 }
 
+interface SseResult {
+  readonly eventTypes: readonly string[];
+  readonly terminal: boolean;
+}
+
 const redactor = new Redactor();
 
 function isRecord(
@@ -122,7 +127,7 @@ function isTerminalFrame(frame: SseFrame): boolean {
 }
 
 interface OpenSse {
-  readonly done: Promise<readonly string[]>;
+  readonly done: Promise<SseResult>;
   readonly ready: Promise<Response>;
   readonly stop: () => void;
 }
@@ -142,41 +147,56 @@ function openSse(baseUrl: string, timeoutMs: number): OpenSse {
       signal: controller.signal,
     });
     resolveReady(response);
-    if (response.body === null) return [];
+    if (response.body === null) return { eventTypes: [], terminal: false };
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
     const types: string[] = [];
+    let terminal = false;
     try {
       while (true) {
         const next = await reader.read();
         if (next.done) break;
         buffer += decoder.decode(next.value, { stream: true });
-        let boundary = buffer.indexOf("\n\n");
+        let boundary = frameBoundary(buffer);
         while (boundary >= 0) {
           const frame = parseFrame(buffer.slice(0, boundary));
-          buffer = buffer.slice(boundary + 2);
+          const separatorLength = buffer.startsWith("\r\n", boundary + 2)
+            ? 4
+            : 2;
+          buffer = buffer.slice(boundary + separatorLength);
           if (frame !== null) {
             const type = eventType(frame);
             if (type !== null) types.push(type);
             if (isTerminalFrame(frame)) {
+              terminal = true;
               controller.abort();
-              return types;
+              return { eventTypes: types, terminal };
             }
           }
-          boundary = buffer.indexOf("\n\n");
+          boundary = frameBoundary(buffer);
         }
       }
-      return types;
+      return { eventTypes: types, terminal };
     } finally {
       clearTimeout(timer);
     }
   })().catch((error: unknown) => {
     rejectReady(error);
-    if (error instanceof DOMException && error.name === "AbortError") return [];
+    if (error instanceof DOMException && error.name === "AbortError") {
+      return { eventTypes: [], terminal: false };
+    }
     throw error;
   });
   return { done, ready, stop: () => controller.abort() };
+}
+
+function frameBoundary(buffer: string): number {
+  const lf = buffer.indexOf("\n\n");
+  const crlf = buffer.indexOf("\r\n\r\n");
+  if (lf < 0) return crlf;
+  if (crlf < 0) return lf;
+  return Math.min(lf, crlf);
 }
 
 export async function runScenarios(
@@ -247,7 +267,8 @@ export async function runScenarios(
         },
       ],
     });
-    const observedEventTypes = await stream.done;
+    const sse = await stream.done;
+    const observedEventTypes = sse.eventTypes;
     results.push({
       expectedTerminal: "prompt response plus terminal SSE event",
       id: "C06",
@@ -281,7 +302,8 @@ export async function runScenarios(
     scenarios: results,
     status: results.some(
       (scenario) =>
-        scenario.id === "C06" && scenario.observedEventTypes.length > 0
+        scenario.id === "C06" &&
+        scenario.observedEventTypes.includes("turn.completed")
     )
       ? "completed"
       : "partial",
