@@ -51,6 +51,20 @@ bun run contract:scenarios
 
 The current driver exercises C01-C06 (with C05 history), C11 abort, C13-C14 rollback/continue, C17 concurrency, and C18 malformed/unknown requests. A `partial` report means setup or terminal SSE evidence was unavailable; it is not a passing contract.
 
+## Run the pinned reference gate
+
+The reference gate must be driven by stock T3's OpenCode adapter. The supervisor accepts argv as JSON arrays (no shell parsing), starts the pinned OpenCode command, places the recorder in front of it, and passes the recorder URL to the T3 command:
+
+```sh
+CORPUS_ID=<manifest-corpus-id> \
+REFERENCE_T3_KIND=stock-t3-opencode-adapter \
+REFERENCE_OPENCODE_ARGV='["opencode","serve","--hostname=127.0.0.1","--port=%PORT%"]' \
+REFERENCE_T3_ARGV='["pnpm","test:opencode-adapter"]' \
+bun run contract:reference
+```
+
+`REFERENCE_T3_ARGV` must invoke the unmodified pinned T3 provider path; the supervisor rejects missing commands and does not substitute the raw-fetch scenario driver. A successful run validates the capture JSONL and writes a reference-run manifest. The command fails if OpenCode never becomes healthy, T3 exits non-zero, or capture validation fails.
+
 ## Maintain evidence
 
 1. Update `contracts/manifest.json` for a new upstream identity; never overwrite a corpus with a different identity.
