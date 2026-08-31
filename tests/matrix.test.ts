@@ -1,7 +1,12 @@
 import { describe, expect, test } from "bun:test";
 
 import type { JsonValue } from "../src/types.ts";
-import { decodeMatrix, loadMatrix } from "../tools/contract/matrix.ts";
+import {
+  assertMatrixCorpus,
+  decodeMatrix,
+  loadMatrix,
+  type Matrix,
+} from "../tools/contract/matrix.ts";
 
 describe("contract matrix", () => {
   test("starts explicitly pending until a reference corpus exists", async () => {
@@ -35,5 +40,18 @@ describe("contract matrix", () => {
         status: "frozen",
       } as unknown as JsonValue)
     ).toThrow("cannot be a hypothesis");
+  });
+
+  test("binds a frozen matrix to the verified reference corpus", () => {
+    const matrix = {
+      corpusId: "corpus-a",
+      rows: [],
+      schemaVersion: 1,
+      status: "frozen",
+    } as Matrix;
+    expect(() => assertMatrixCorpus(matrix, "corpus-b")).toThrow(
+      "does not match reference corpus"
+    );
+    expect(() => assertMatrixCorpus(matrix, "corpus-a")).not.toThrow();
   });
 });

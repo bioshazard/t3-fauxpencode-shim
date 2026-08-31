@@ -1,6 +1,7 @@
 import type { JsonValue } from "../../src/types.ts";
+import { verifyReferenceArtifacts } from "./reference-verify.ts";
 
-interface Matrix {
+export interface Matrix {
   readonly corpusId: string;
   readonly rows: readonly JsonValue[];
   readonly schemaVersion: 1;
@@ -100,11 +101,31 @@ export async function loadMatrix(): Promise<Matrix> {
   return decodeMatrix((await Bun.file(matrixPath).json()) as JsonValue);
 }
 
-export async function validateMatrix(): Promise<void> {
-  await loadMatrix();
+export function assertMatrixCorpus(matrix: Matrix, corpusId: string): void {
+  if (matrix.corpusId !== corpusId)
+    throw new Error(
+      `Frozen matrix corpus ${matrix.corpusId} does not match reference corpus ${corpusId}.`
+    );
+}
+
+export async function validateMatrix(
+  referenceManifestPath = Bun.env.REFERENCE_MANIFEST
+): Promise<void> {
+  const matrix = await loadMatrix();
+  if (matrix.status !== "frozen") return;
+  if (
+    referenceManifestPath === undefined ||
+    referenceManifestPath.trim() === ""
+  )
+    throw new Error(
+      "A frozen matrix requires REFERENCE_MANIFEST or a manifest path argument."
+    );
+  const manifest = await verifyReferenceArtifacts(referenceManifestPath);
+  assertMatrixCorpus(matrix, manifest.corpusId);
 }
 
 if (import.meta.main) {
   const matrix = await loadMatrix();
+  await validateMatrix(Bun.argv[2] ?? Bun.env.REFERENCE_MANIFEST);
   console.log(`validated ${matrix.rows.length} matrix rows (${matrix.status})`);
 }
