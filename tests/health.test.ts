@@ -10,15 +10,16 @@ const config: ShimConfig = {
   modelId: "test-model",
   port: 4096,
   providerId: "pi",
+  sessionDir: undefined,
   version: "test",
 };
 
-const request = (path: string, method = "GET") =>
+const request = async (path: string, method = "GET") =>
   createHandler(config)(new Request(`http://shim.test${path}`, { method }));
 
 describe("health and discovery", () => {
   test("reports readiness", async () => {
-    const response = request("/global/health");
+    const response = await request("/global/health");
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
@@ -29,7 +30,7 @@ describe("health and discovery", () => {
   });
 
   test("reports the configured Pi model", async () => {
-    const response = request("/provider");
+    const response = await request("/provider");
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
@@ -44,9 +45,14 @@ describe("health and discovery", () => {
     });
   });
 
-  test("fails explicitly for unknown routes and unsupported work", async () => {
-    const unknown = request("/not-in-contract");
-    const session = request("/session", "POST");
+  test("fails explicitly for unknown routes and malformed work", async () => {
+    const unknown = await request("/not-in-contract");
+    const session = await createHandler(config)(
+      new Request("http://shim.test/session", {
+        body: "not-json",
+        method: "POST",
+      })
+    );
 
     expect(unknown.status).toBe(404);
     expect(await unknown.json()).toEqual({
@@ -55,17 +61,17 @@ describe("health and discovery", () => {
         message: "No contract for GET /not-in-contract",
       },
     });
-    expect(session.status).toBe(501);
+    expect(session.status).toBe(400);
     expect(await session.json()).toEqual({
       error: {
-        code: "unimplemented_contract",
-        message: "Session creation is the next POC slice.",
+        code: "invalid_request",
+        message: "Request body must be valid JSON.",
       },
     });
   });
 
   test("rejects wrong methods", async () => {
-    const response = request("/global/health", "POST");
+    const response = await request("/global/health", "POST");
 
     expect(response.status).toBe(405);
     expect(await response.json()).toEqual({

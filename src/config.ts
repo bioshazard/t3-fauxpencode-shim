@@ -22,6 +22,7 @@ export function loadConfig(environment: Environment = Bun.env): ShimConfig {
     modelId: environment.PI_MODEL ?? DEFAULT_MODEL,
     port: configuredPort(environment.PI_OPENCODE_PORT),
     providerId: environment.PI_PROVIDER ?? DEFAULT_PROVIDER,
+    sessionDir: environment.PI_SESSION_DIR,
     version: SERVICE_VERSION,
   };
 }

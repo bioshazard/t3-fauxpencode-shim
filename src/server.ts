@@ -1,16 +1,32 @@
 import { loadConfig } from "./config.ts";
 import { contractError } from "./contract.ts";
+import { readCreateSessionRequest } from "./request.ts";
+import {
+  InMemorySessionBackend,
+  PiSessionBackend,
+  SessionRegistry,
+} from "./sessions.ts";
 import type {
+  FacadeMessage,
   ErrorResponse,
   HealthResponse,
+  JsonValue,
   ProviderResponse,
+  SessionSnapshot,
   ShimConfig,
 } from "./types.ts";
 
-function jsonResponse(
-  body: HealthResponse | ProviderResponse | ErrorResponse,
-  status = 200
-): Response {
+type ResponseBody =
+  | ErrorResponse
+  | FacadeMessage
+  | HealthResponse
+  | JsonValue
+  | ProviderResponse
+  | SessionSnapshot
+  | readonly FacadeMessage[]
+  | readonly SessionSnapshot[];
+
+function jsonResponse(body: ResponseBody, status = 200): Response {
   return Response.json(body, {
     headers: { "cache-control": "no-store" },
     status,
@@ -28,8 +44,23 @@ function methodNotAllowed(request: Request): Response {
 }
 
 export function createHandler(
-  config: ShimConfig
-): (request: Request) => Response {
+  config: ShimConfig,
+  sessions = new SessionRegistry(new InMemorySessionBackend())
+): (request: Request) => Response | Promise<Response> {
+  return createSessionHandler(config, sessions);
+}
+
+function notFound(): Response {
+  return jsonResponse(
+    contractError("unknown_session", "The requested session does not exist."),
+    404
+  );
+}
+
+function createSessionHandler(
+  config: ShimConfig,
+  sessions: SessionRegistry
+): (request: Request) => Response | Promise<Response> {
   return (request) => {
     const url = new URL(request.url);
 
@@ -53,16 +84,47 @@ export function createHandler(
     }
 
     if (url.pathname === "/session" && request.method === "POST") {
-      return jsonResponse(
-        contractError(
-          "unimplemented_contract",
-          "Session creation is the next POC slice."
-        ),
-        501
+      return readCreateSessionRequest(request, config.cwd).then(
+        async (parsed) => {
+          if (parsed.kind === "error") {
+            return jsonResponse(
+              contractError("invalid_request", parsed.message),
+              400
+            );
+          }
+          try {
+            return jsonResponse(
+              await sessions.createSession(parsed.input),
+              201
+            );
+          } catch (error) {
+            const message =
+              error instanceof Error
+                ? error.message
+                : "Session creation failed.";
+            return jsonResponse(contractError("session_exists", message), 409);
+          }
+        }
       );
     }
 
+    if (url.pathname === "/session" && request.method === "GET") {
+      return sessions.listSessions().then((items) => jsonResponse(items));
+    }
+
     if (url.pathname === "/session") return methodNotAllowed(request);
+
+    const sessionPath = /^\/session\/([^/]+)(\/message)?$/u.exec(url.pathname);
+    if (sessionPath !== null) {
+      const sessionId = decodeURIComponent(sessionPath[1] ?? "");
+      if (request.method !== "GET") return methodNotAllowed(request);
+      return sessions.getSnapshot(sessionId).then((snapshot) => {
+        if (snapshot === null) return notFound();
+        return jsonResponse(
+          sessionPath[2] === "/message" ? snapshot.messages : snapshot
+        );
+      });
+    }
 
     return jsonResponse(
       contractError(
@@ -77,8 +139,9 @@ export function createHandler(
 export function runServer(
   config: ShimConfig = loadConfig()
 ): Bun.Server<undefined> {
+  const sessions = new SessionRegistry(new PiSessionBackend(config));
   const server = Bun.serve({
-    fetch: createHandler(config),
+    fetch: createSessionHandler(config, sessions),
     hostname: config.host,
     port: config.port,
   });
