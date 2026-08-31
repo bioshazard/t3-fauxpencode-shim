@@ -4,9 +4,13 @@ import { runScenarios } from "../tools/contract/scenarios.ts";
 
 describe("headless contract scenarios", () => {
   test("drives the health, discovery, session, history, and text-turn flow", async () => {
-    let eventController:
-      | ReadableStreamDefaultController<Uint8Array>
-      | undefined;
+    const eventControllers = new Map<
+      string,
+      { readonly enqueue: (chunk: Uint8Array) => void }
+    >();
+    const sessions = new Set<string>();
+    const prompted = new Set<string>();
+    let sessionCount = 0;
     const encoder = new TextEncoder();
     const server = Bun.serve({
       fetch: async (request) => {
@@ -21,34 +25,79 @@ describe("headless contract scenarios", () => {
           return Response.json([]);
         }
         if (url.pathname === "/session" && request.method === "POST") {
-          return Response.json({ id: "capture-session" }, { status: 201 });
+          if ((await request.text()) === "not-json")
+            return Response.json({ error: "invalid" }, { status: 400 });
+          sessionCount += 1;
+          const id =
+            sessionCount === 1 ? "capture-session" : `capture-${sessionCount}`;
+          sessions.add(id);
+          return Response.json({ id }, { status: 201 });
         }
-        if (url.pathname === "/session/capture-session") {
-          return Response.json({ id: "capture-session", messages: [] });
+        if (url.pathname === "/session" && request.method === "GET") {
+          return Response.json([...sessions].map((id) => ({ id })));
         }
-        if (url.pathname === "/session/capture-session/message")
-          return Response.json([]);
+        const sessionMatch = /^\/session\/([^/]+)(?:\/(.*))?$/u.exec(
+          url.pathname
+        );
+        if (sessionMatch !== null) {
+          const id = sessionMatch[1] ?? "";
+          const operation = sessionMatch[2] ?? "";
+          if (!sessions.has(id))
+            return new Response("missing", { status: 404 });
+          if (operation === "" && request.method === "GET")
+            return Response.json({ id, messages: [] });
+          if (operation === "message" && request.method === "GET") {
+            return Response.json(
+              prompted.has(id)
+                ? [
+                    {
+                      info: { id: "assistant-1", role: "assistant" },
+                      parts: [],
+                    },
+                  ]
+                : []
+            );
+          }
+          if (operation === "event" && request.method === "GET") {
+            const stream = new ReadableStream<Uint8Array>({
+              start: (controller) => {
+                eventControllers.set(id, controller);
+                controller.enqueue(encoder.encode(": connected\n\n"));
+              },
+              cancel: () => {
+                eventControllers.delete(id);
+              },
+            });
+            return new Response(stream, {
+              headers: { "content-type": "text/event-stream" },
+            });
+          }
+          if (operation === "prompt_async" && request.method === "POST") {
+            prompted.add(id);
+            eventControllers
+              .get(id)
+              ?.enqueue(
+                encoder.encode(
+                  `event: turn.completed\ndata: ${JSON.stringify({ sessionID: id, type: "turn.completed" })}\n\n`
+                )
+              );
+            return new Response(null, { status: 204 });
+          }
+          if (operation === "abort" && request.method === "POST")
+            return Response.json(true);
+          if (operation === "revert" && request.method === "POST")
+            return Response.json({ id });
+        }
         if (url.pathname === "/event") {
           const stream = new ReadableStream<Uint8Array>({
             start: (controller) => {
-              eventController = controller;
               controller.enqueue(encoder.encode(": connected\n\n"));
             },
-            cancel: () => {
-              eventController = undefined;
-            },
+            cancel: () => undefined,
           });
           return new Response(stream, {
             headers: { "content-type": "text/event-stream" },
           });
-        }
-        if (url.pathname === "/session/capture-session/prompt_async") {
-          eventController?.enqueue(
-            encoder.encode(
-              'event: turn.completed\ndata: {"type":"turn.completed"}\n\n'
-            )
-          );
-          return new Response(null, { status: 204 });
         }
         return new Response("missing", { status: 404 });
       },
@@ -59,7 +108,8 @@ describe("headless contract scenarios", () => {
       const report = await runScenarios(
         server.url.toString(),
         "test-corpus",
-        500
+        500,
+        { barrier: { waitFor: async () => undefined }, runId: "test-run" }
       );
       expect(report.status).toBe("completed");
       expect(report.scenarios.map((scenario) => scenario.id)).toEqual([
@@ -67,8 +117,8 @@ describe("headless contract scenarios", () => {
         "C02",
         "C03",
         "C04",
-        "C05",
         "C06",
+        "C05",
         "C13",
         "C14",
         "C11",

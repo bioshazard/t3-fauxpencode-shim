@@ -8,15 +8,21 @@ interface OperationResult {
   readonly transportError?: string;
 }
 
-interface ScenarioResult {
+export interface ScenarioResult {
   readonly expectedTerminal: string;
+  readonly failures: readonly string[];
   readonly id: string;
   readonly operations: readonly OperationResult[];
   readonly observedEventTypes: readonly string[];
+  readonly passed: boolean;
   readonly sessionId?: string;
 }
 
-interface ScenarioReport {
+type ScenarioResultInput = Omit<ScenarioResult, "failures" | "passed"> & {
+  readonly scopeValid?: boolean;
+};
+
+export interface ScenarioReport {
   readonly baseUrl: string;
   readonly corpusId: string | null;
   readonly generatedAt: string;
@@ -31,7 +37,24 @@ interface SseFrame {
 
 interface SseResult {
   readonly eventTypes: readonly string[];
+  readonly sessionIDs: readonly string[];
   readonly terminal: boolean;
+}
+
+export interface ScenarioBarrier {
+  readonly waitFor: (name: string) => Promise<void>;
+}
+
+export interface ScenarioOptions {
+  readonly barrier?: ScenarioBarrier;
+  readonly runId?: string;
+}
+
+interface RequestContext {
+  readonly runId: string;
+  readonly scenario: string;
+  readonly sessionId?: string;
+  readonly turnId?: string;
 }
 
 const redactor = new Redactor();
@@ -40,6 +63,14 @@ function isRecord(
   value: unknown
 ): value is { readonly [key: string]: unknown } {
   return Object.prototype.toString.call(value) === "[object Object]";
+}
+
+function isStringValue(value: unknown): value is string {
+  return Object.prototype.toString.call(value) === "[object String]";
+}
+
+function isFunctionValue(value: unknown): value is (value: number) => boolean {
+  return Object.prototype.toString.call(value) === "[object Function]";
 }
 
 function parsedBody(value: string): unknown {
@@ -80,7 +111,8 @@ async function call(
   baseUrl: string,
   method: string,
   path: string,
-  body?: unknown
+  body?: unknown,
+  context?: RequestContext
 ): Promise<OperationResult> {
   try {
     const serializedBody =
@@ -91,10 +123,23 @@ async function call(
           : JSON.stringify(body);
     const response = await fetch(new URL(path, baseUrl), {
       ...(serializedBody === undefined ? {} : { body: serializedBody }),
-      headers:
-        serializedBody === undefined
+      headers: {
+        ...(serializedBody === undefined
           ? {}
-          : { "content-type": "application/json" },
+          : { "content-type": "application/json" }),
+        ...(context === undefined
+          ? {}
+          : {
+              "x-contract-run-id": context.runId,
+              "x-contract-scenario": context.scenario,
+              ...(context.sessionId === undefined
+                ? {}
+                : { "x-opencode-session-id": context.sessionId }),
+              ...(context.turnId === undefined
+                ? {}
+                : { "x-t3-turn-id": context.turnId }),
+            }),
+      },
       method,
     });
     const text = await response.text();
@@ -163,7 +208,12 @@ interface OpenSse {
   readonly stop: () => void;
 }
 
-function openSse(baseUrl: string, timeoutMs: number): OpenSse {
+function openSse(
+  baseUrl: string,
+  path: string,
+  timeoutMs: number,
+  context: RequestContext
+): OpenSse {
   const controller = new AbortController();
   let resolveReady: (response: Response) => void = () => undefined;
   let rejectReady: (error: unknown) => void = () => undefined;
@@ -173,16 +223,28 @@ function openSse(baseUrl: string, timeoutMs: number): OpenSse {
   });
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   const done = (async () => {
-    const response = await fetch(new URL("/event", baseUrl), {
-      headers: { accept: "text/event-stream" },
+    const response = await fetch(new URL(path, baseUrl), {
+      headers: {
+        accept: "text/event-stream",
+        "x-contract-run-id": context.runId,
+        "x-contract-scenario": context.scenario,
+        ...(context.sessionId === undefined
+          ? {}
+          : { "x-opencode-session-id": context.sessionId }),
+        ...(context.turnId === undefined
+          ? {}
+          : { "x-t3-turn-id": context.turnId }),
+      },
       signal: controller.signal,
     });
     resolveReady(response);
-    if (response.body === null) return { eventTypes: [], terminal: false };
+    if (response.body === null)
+      return { eventTypes: [], sessionIDs: [], terminal: false };
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
     const types: string[] = [];
+    const sessionIDs = new Set<string>();
     let terminal = false;
     try {
       while (true) {
@@ -199,23 +261,30 @@ function openSse(baseUrl: string, timeoutMs: number): OpenSse {
           if (frame !== null) {
             const type = eventType(frame);
             if (type !== null) types.push(type);
+            const parsed = parsedBody(frame.data);
+            if (isRecord(parsed) && isStringValue(parsed.sessionID))
+              sessionIDs.add(parsed.sessionID);
             if (isTerminalFrame(frame)) {
               terminal = true;
               controller.abort();
-              return { eventTypes: types, terminal };
+              return {
+                eventTypes: types,
+                sessionIDs: [...sessionIDs],
+                terminal,
+              };
             }
           }
           boundary = frameBoundary(buffer);
         }
       }
-      return { eventTypes: types, terminal };
+      return { eventTypes: types, sessionIDs: [...sessionIDs], terminal };
     } finally {
       clearTimeout(timer);
     }
   })().catch((error: unknown) => {
     rejectReady(error);
     if (error instanceof DOMException && error.name === "AbortError") {
-      return { eventTypes: [], terminal: false };
+      return { eventTypes: [], sessionIDs: [], terminal: false };
     }
     throw error;
   });
@@ -230,14 +299,131 @@ function frameBoundary(buffer: string): number {
   return Math.min(lf, crlf);
 }
 
+function expectedStatusFailure(
+  scenario: ScenarioResultInput,
+  index: number,
+  expected: number | readonly number[] | ((status: number) => boolean)
+): string | null {
+  const operation = scenario.operations[index];
+  if (operation === undefined) return `missing operation ${index + 1}`;
+  if (operation.status === null)
+    return `${operation.method} ${operation.path} did not receive a response`;
+  const matches = isFunctionValue(expected)
+    ? expected(operation.status)
+    : Array.isArray(expected)
+      ? expected.includes(operation.status)
+      : operation.status === expected;
+  return matches
+    ? null
+    : `${operation.method} ${operation.path} returned ${operation.status}`;
+}
+
+function finalizeScenarios(
+  results: readonly ScenarioResultInput[],
+  barriersAvailable: boolean
+): readonly ScenarioResult[] {
+  return results.map((scenario) => {
+    const failures: string[] = [];
+    const any2xx = (status: number): boolean => status >= 200 && status < 300;
+    const check = (
+      index: number,
+      expected: number | readonly number[] | ((status: number) => boolean)
+    ): void => {
+      const failure = expectedStatusFailure(scenario, index, expected);
+      if (failure !== null) failures.push(failure);
+    };
+    switch (scenario.id) {
+      case "C01":
+        check(0, 200);
+        break;
+      case "C02":
+        scenario.operations.forEach((_operation, index) => check(index, 200));
+        break;
+      case "C03":
+        check(0, any2xx);
+        break;
+      case "C04":
+        check(0, 200);
+        check(1, 200);
+        check(2, 200);
+        check(3, 404);
+        break;
+      case "C05":
+        scenario.operations.forEach((_operation, index) => check(index, 200));
+        break;
+      case "C06":
+        check(0, 204);
+        if (!scenario.observedEventTypes.includes("turn.completed"))
+          failures.push("no turn.completed event observed");
+        break;
+      case "C11":
+        check(0, 204);
+        check(1, 200);
+        if (!barriersAvailable) failures.push("C11 barrier was not provided");
+        if (
+          !scenario.observedEventTypes.some((type) =>
+            ["turn.completed", "session.status"].includes(type)
+          )
+        )
+          failures.push("no abort terminal event observed");
+        break;
+      case "C13":
+        check(0, 200);
+        check(1, 200);
+        check(2, 200);
+        break;
+      case "C14":
+        check(0, 204);
+        check(1, 200);
+        if (!scenario.observedEventTypes.includes("turn.completed"))
+          failures.push("no post-rollback completion event observed");
+        break;
+      case "C17":
+        scenario.operations.forEach((_operation, index) =>
+          check(index, any2xx)
+        );
+        if (scenario.scopeValid === false)
+          failures.push("session-scoped event stream leaked another session");
+        break;
+      case "C18":
+        check(0, 400);
+        check(1, 404);
+        break;
+      default:
+        break;
+    }
+    const { scopeValid: _scopeValid, ...publicScenario } = scenario;
+    return {
+      ...publicScenario,
+      failures,
+      passed: failures.length === 0,
+    };
+  });
+}
+
 export async function runScenarios(
   baseUrl: string,
   corpusId: string | null,
-  timeoutMs = 15_000
+  timeoutMs = 15_000,
+  options: ScenarioOptions = {}
 ): Promise<ScenarioReport> {
-  const results: ScenarioResult[] = [];
+  const results: ScenarioResultInput[] = [];
+  const runId = options.runId ?? crypto.randomUUID();
+  const barrier = options.barrier;
+  const context = (
+    scenario: string,
+    sessionId?: string,
+    turnId?: string
+  ): RequestContext => ({
+    runId,
+    scenario,
+    ...(sessionId === undefined ? {} : { sessionId }),
+    ...(turnId === undefined ? {} : { turnId }),
+  });
   const startup: OperationResult[] = [];
-  startup.push(await call(baseUrl, "GET", "/global/health"));
+  startup.push(
+    await call(baseUrl, "GET", "/global/health", undefined, context("C01"))
+  );
   results.push({
     expectedTerminal: "health response received",
     id: "C01",
@@ -247,7 +433,7 @@ export async function runScenarios(
 
   const discovery: OperationResult[] = [];
   for (const path of ["/provider", "/agent", "/skill"]) {
-    discovery.push(await call(baseUrl, "GET", path));
+    discovery.push(await call(baseUrl, "GET", path, undefined, context("C02")));
   }
   results.push({
     expectedTerminal: "provider, agent, and skill responses received",
@@ -256,7 +442,7 @@ export async function runScenarios(
     operations: discovery,
   });
 
-  const create = await call(baseUrl, "POST", "/session", {});
+  const create = await call(baseUrl, "POST", "/session", {}, context("C03"));
   const sessionId = bodySessionId(create.body);
   results.push({
     expectedTerminal: "session id returned",
@@ -266,11 +452,12 @@ export async function runScenarios(
     ...(sessionId === null ? {} : { sessionId }),
   });
   if (sessionId === null) {
+    const scenarios = finalizeScenarios(results, barrier !== undefined);
     return {
       baseUrl,
       corpusId,
       generatedAt: new Date().toISOString(),
-      scenarios: results,
+      scenarios,
       status: "partial",
     };
   }
@@ -281,30 +468,55 @@ export async function runScenarios(
     id: "C04",
     observedEventTypes: [],
     operations: [
-      await call(baseUrl, "GET", sessionPath),
-      await call(baseUrl, "GET", `${sessionPath}/message`),
+      await call(baseUrl, "GET", "/session", undefined, context("C04")),
+      await call(
+        baseUrl,
+        "GET",
+        sessionPath,
+        undefined,
+        context("C04", sessionId)
+      ),
+      await call(
+        baseUrl,
+        "GET",
+        `${sessionPath}/message`,
+        undefined,
+        context("C04", sessionId)
+      ),
+      await call(baseUrl, "GET", "/session/missing", undefined, context("C04")),
     ],
     sessionId,
   });
-  results.push({
-    expectedTerminal: "empty history response received",
-    id: "C05",
-    observedEventTypes: [],
-    operations: [await call(baseUrl, "GET", `${sessionPath}/message`)],
-    sessionId,
-  });
+  const emptyHistory = await call(
+    baseUrl,
+    "GET",
+    `${sessionPath}/message`,
+    undefined,
+    context("C05", sessionId)
+  );
 
-  const stream = openSse(baseUrl, timeoutMs);
+  const stream = openSse(
+    baseUrl,
+    `${sessionPath}/event`,
+    timeoutMs,
+    context("C06", sessionId)
+  );
   try {
     await stream.ready;
-    const prompt = await call(baseUrl, "POST", `${sessionPath}/prompt_async`, {
-      parts: [
-        {
-          text: Bun.env.CAPTURE_PROMPT ?? "contract capture text",
-          type: "text",
-        },
-      ],
-    });
+    const prompt = await call(
+      baseUrl,
+      "POST",
+      `${sessionPath}/prompt_async`,
+      {
+        parts: [
+          {
+            text: Bun.env.CAPTURE_PROMPT ?? "contract capture text",
+            type: "text",
+          },
+        ],
+      },
+      context("C06", sessionId, "C06-turn")
+    );
     const sse = await stream.done;
     const observedEventTypes = sse.eventTypes;
     results.push({
@@ -334,11 +546,28 @@ export async function runScenarios(
     });
   }
 
-  const populatedHistory = await call(baseUrl, "GET", `${sessionPath}/message`);
-  const assistantId = bodyAssistantId(populatedHistory.body);
-  const revert = await call(baseUrl, "POST", `${sessionPath}/revert`, {
-    messageID: assistantId ?? "missing-assistant",
+  const populatedHistory = await call(
+    baseUrl,
+    "GET",
+    `${sessionPath}/message`,
+    undefined,
+    context("C05", sessionId)
+  );
+  results.push({
+    expectedTerminal: "empty and populated history responses received",
+    id: "C05",
+    observedEventTypes: [],
+    operations: [emptyHistory, populatedHistory],
+    sessionId,
   });
+  const assistantId = bodyAssistantId(populatedHistory.body);
+  const revert = await call(
+    baseUrl,
+    "POST",
+    `${sessionPath}/revert`,
+    { messageID: assistantId ?? "missing-assistant" },
+    context("C13", sessionId)
+  );
   results.push({
     expectedTerminal: "completed turn can be reverted",
     id: "C13",
@@ -346,19 +575,31 @@ export async function runScenarios(
     operations: [
       populatedHistory,
       revert,
-      await call(baseUrl, "GET", `${sessionPath}/message`),
+      await call(
+        baseUrl,
+        "GET",
+        `${sessionPath}/message`,
+        undefined,
+        context("C13", sessionId)
+      ),
     ],
     sessionId,
   });
 
-  const continuedStream = openSse(baseUrl, timeoutMs);
+  const continuedStream = openSse(
+    baseUrl,
+    `${sessionPath}/event`,
+    timeoutMs,
+    context("C14", sessionId)
+  );
   try {
     await continuedStream.ready;
     const continuedPrompt = await call(
       baseUrl,
       "POST",
       `${sessionPath}/prompt_async`,
-      { parts: [{ text: "after rollback", type: "text" }] }
+      { parts: [{ text: "after rollback", type: "text" }] },
+      context("C14", sessionId, "C14-turn")
     );
     const continuedEvents = await continuedStream.done;
     results.push({
@@ -367,7 +608,13 @@ export async function runScenarios(
       observedEventTypes: continuedEvents.eventTypes,
       operations: [
         continuedPrompt,
-        await call(baseUrl, "GET", `${sessionPath}/message`),
+        await call(
+          baseUrl,
+          "GET",
+          `${sessionPath}/message`,
+          undefined,
+          context("C14", sessionId)
+        ),
       ],
       sessionId,
     });
@@ -391,13 +638,29 @@ export async function runScenarios(
     });
   }
 
-  const abortStream = openSse(baseUrl, timeoutMs);
+  const abortStream = openSse(
+    baseUrl,
+    `${sessionPath}/event`,
+    timeoutMs,
+    context("C11", sessionId)
+  );
   try {
     await abortStream.ready;
-    const prompt = call(baseUrl, "POST", `${sessionPath}/prompt_async`, {
-      parts: [{ text: "abort me", type: "text" }],
-    });
-    const abort = await call(baseUrl, "POST", `${sessionPath}/abort`);
+    const prompt = call(
+      baseUrl,
+      "POST",
+      `${sessionPath}/prompt_async`,
+      { parts: [{ text: "abort me", type: "text" }] },
+      context("C11", sessionId, "C11-turn")
+    );
+    await (barrier?.waitFor("C11.turn-active") ?? Promise.resolve());
+    const abort = await call(
+      baseUrl,
+      "POST",
+      `${sessionPath}/abort`,
+      undefined,
+      context("C11", sessionId, "C11-turn")
+    );
     const promptResult = await prompt;
     const abortEvents = await abortStream.done;
     results.push({
@@ -427,10 +690,20 @@ export async function runScenarios(
     });
   }
 
-  const malformed = await call(baseUrl, "POST", "/session", "not-json");
-  const missing = await call(baseUrl, "POST", "/session/missing/prompt_async", {
-    parts: [{ text: "missing", type: "text" }],
-  });
+  const malformed = await call(
+    baseUrl,
+    "POST",
+    "/session",
+    "not-json",
+    context("C18")
+  );
+  const missing = await call(
+    baseUrl,
+    "POST",
+    "/session/missing/prompt_async",
+    { parts: [{ text: "missing", type: "text" }] },
+    context("C18")
+  );
   results.push({
     expectedTerminal: "malformed and unknown-session requests return errors",
     id: "C18",
@@ -439,24 +712,44 @@ export async function runScenarios(
     sessionId,
   });
 
-  const secondCreate = await call(baseUrl, "POST", "/session", {});
+  const secondCreate = await call(
+    baseUrl,
+    "POST",
+    "/session",
+    {},
+    context("C17")
+  );
   const secondId = bodySessionId(secondCreate.body);
   if (secondId !== null) {
-    const firstStream = openSse(baseUrl, timeoutMs);
-    const secondStream = openSse(baseUrl, timeoutMs);
+    const secondSessionPath = `/session/${encodeURIComponent(secondId)}`;
+    const firstStream = openSse(
+      baseUrl,
+      `${sessionPath}/event`,
+      timeoutMs,
+      context("C17", sessionId)
+    );
+    const secondStream = openSse(
+      baseUrl,
+      `${secondSessionPath}/event`,
+      timeoutMs,
+      context("C17", secondId)
+    );
     try {
       await Promise.all([firstStream.ready, secondStream.ready]);
       const [firstPrompt, secondPrompt] = await Promise.all([
-        call(baseUrl, "POST", `${sessionPath}/prompt_async`, {
-          parts: [{ text: "parallel one", type: "text" }],
-        }),
+        call(
+          baseUrl,
+          "POST",
+          `${sessionPath}/prompt_async`,
+          { parts: [{ text: "parallel one", type: "text" }] },
+          context("C17", sessionId, "C17-first-turn")
+        ),
         call(
           baseUrl,
           "POST",
           `/session/${encodeURIComponent(secondId)}/prompt_async`,
-          {
-            parts: [{ text: "parallel two", type: "text" }],
-          }
+          { parts: [{ text: "parallel two", type: "text" }] },
+          context("C17", secondId, "C17-second-turn")
         ),
       ]);
       const [firstEvents, secondEvents] = await Promise.all([
@@ -471,6 +764,15 @@ export async function runScenarios(
           ...secondEvents.eventTypes,
         ],
         operations: [secondCreate, firstPrompt, secondPrompt],
+        scopeValid:
+          firstEvents.sessionIDs.includes(sessionId) &&
+          firstEvents.sessionIDs.every(
+            (observed) => observed === "" || observed === sessionId
+          ) &&
+          secondEvents.sessionIDs.includes(secondId) &&
+          secondEvents.sessionIDs.every(
+            (observed) => observed === "" || observed === secondId
+          ),
         sessionId,
       });
     } catch (error) {
@@ -504,18 +806,16 @@ export async function runScenarios(
       sessionId,
     });
   }
+  const scenarios = finalizeScenarios(results, barrier !== undefined);
   return {
     baseUrl,
     corpusId,
     generatedAt: new Date().toISOString(),
-    scenarios: results,
-    status: results.some(
-      (scenario) =>
-        scenario.id === "C06" &&
-        scenario.observedEventTypes.includes("turn.completed")
-    )
-      ? "completed"
-      : "partial",
+    scenarios,
+    status:
+      scenarios.length > 0 && scenarios.every((scenario) => scenario.passed)
+        ? "completed"
+        : "partial",
   };
 }
 
