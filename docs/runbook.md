@@ -25,6 +25,7 @@ Run the recorder in front of the pinned real OpenCode server used by the referen
 ```sh
 CAPTURE_TARGET=http://127.0.0.1:<opencode-port> \
 CAPTURE_OUTPUT=artifacts/raw/<corpus>.jsonl \
+CONTRACT_RUN_ID=<run-id> \
 bun run contract:record
 ```
 
@@ -45,7 +46,9 @@ Point the scenario driver at the recorder URL so the same requests are captured:
 ```sh
 SCENARIO_TARGET=http://127.0.0.1:<proxy-port> \
 CORPUS_ID=<manifest-corpus-id> \
+CONTRACT_RUN_ID=<run-id> \
 SCENARIO_OUTPUT=artifacts/runs/<corpus>.json \
+SCENARIO_BARRIER_URL=http://127.0.0.1:<barrier-port> \
 bun run contract:scenarios
 ```
 
@@ -60,12 +63,13 @@ CORPUS_ID=<manifest-corpus-id> \
 REFERENCE_T3_KIND=stock-t3-opencode-adapter \
 T3_REFERENCE_ROOT=/path/to/pinned/t3code \
 OPENCODE_REFERENCE_ROOT=/path/to/pinned/opencode \
-REFERENCE_OPENCODE_ARGV='["opencode","serve","--hostname=127.0.0.1","--port=%PORT%"]' \
+OPENCODE_REFERENCE_BIN=./node_modules/.bin/opencode \
+REFERENCE_OPENCODE_ARGV='["%OPENCODE_BIN%","serve","--hostname=127.0.0.1","--port=%PORT%"]' \
 REFERENCE_T3_ARGV='["pnpm","test:opencode-adapter"]' \
 bun run contract:reference
 ```
 
-The supervisor verifies both checkout HEADs against `contracts/manifest.json`, runs OpenCode from its pinned checkout, and passes the recorder URL as `OPENCODE_BASE_URL` to T3. `REFERENCE_T3_ARGV` must invoke the unmodified pinned T3 provider path; the supervisor rejects missing commands and does not substitute the raw-fetch scenario driver. The T3 command must write the scenario report at `SCENARIO_OUTPUT`. A successful run validates the capture JSONL and requires every scenario report entry to pass before writing a reference-run manifest. The command fails if either checkout is not pinned, OpenCode never becomes healthy, T3 exits non-zero, the scenario report is partial, or capture validation fails.
+The supervisor verifies both checkout HEADs against `contracts/manifest.json`, runs OpenCode from its pinned checkout, and passes the recorder URL as `OPENCODE_BASE_URL` to T3. `REFERENCE_T3_ARGV` must invoke the unmodified pinned T3 provider path; the supervisor rejects missing commands and does not substitute the raw-fetch scenario driver. The T3 harness must propagate `CONTRACT_RUN_ID` and `x-contract-scenario` through its test transport, and must write the scenario report at `SCENARIO_OUTPUT`. A successful run validates the capture JSONL and requires every scenario report entry to pass before writing a reference-run manifest. The command fails if either checkout is not pinned, OpenCode never becomes healthy, T3 exits non-zero, the scenario report is partial, or capture validation fails.
 
 ## Maintain evidence
 

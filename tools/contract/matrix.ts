@@ -27,7 +27,7 @@ function containsTbd(value: JsonValue): boolean {
   return false;
 }
 
-function decodeMatrix(value: JsonValue): Matrix {
+export function decodeMatrix(value: JsonValue): Matrix {
   if (!isRecord(value)) throw new Error("Matrix must be a JSON object.");
   if (
     value.schemaVersion !== 1 ||
@@ -72,6 +72,8 @@ function decodeMatrix(value: JsonValue): Matrix {
     ) {
       throw new Error(`Matrix row ${row.id} has invalid confidence.`);
     }
+    if (value.status === "frozen" && row.confidence === "hypothesis")
+      throw new Error(`Frozen matrix row ${row.id} cannot be a hypothesis.`);
     if (
       row.support !== "required" &&
       row.support !== "conditional" &&

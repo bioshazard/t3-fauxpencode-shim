@@ -15,6 +15,9 @@ bun run dev
 bun run contract:inventory
 bun run contract:matrix
 bun run contract:capture -- artifacts/raw/<corpus>.jsonl
+bun run contract:record
+bun run contract:scenarios
+bun run contract:reference
 ```
 
 The POC is intentionally explicit about unsupported requests. It does not run OpenCode and does not claim complete OpenCode compatibility.

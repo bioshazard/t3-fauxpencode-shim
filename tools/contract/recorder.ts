@@ -343,7 +343,7 @@ export function makeCaptureConfig(
   target: string,
   output: string,
   maxBodyBytes = 8 * 1024 * 1024,
-  runId = crypto.randomUUID()
+  runId: string = crypto.randomUUID()
 ): CaptureConfig {
   const parsedTarget = new URL(target);
   if (parsedTarget.protocol !== "http:" && parsedTarget.protocol !== "https:") {

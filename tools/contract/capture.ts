@@ -87,9 +87,15 @@ function validateRecord(value: unknown, index: number): CaptureRecord {
     validateHeaders(value.correlation, index, "correlation");
   if (!isRecord(value.correlation))
     fail(index, "correlation is required for every exchange");
-  if (!isString(value.correlation["x-contract-run-id"]))
+  if (
+    !isString(value.correlation["x-contract-run-id"]) ||
+    value.correlation["x-contract-run-id"].trim().length === 0
+  )
     fail(index, "correlation is missing x-contract-run-id");
-  if (!isString(value.correlation["x-contract-scenario"]))
+  if (
+    !isString(value.correlation["x-contract-scenario"]) ||
+    value.correlation["x-contract-scenario"].trim().length === 0
+  )
     fail(index, "correlation is missing x-contract-scenario");
   if (body.requestTruncated || body.responseTruncated)
     fail(index, "body is truncated and cannot be reference evidence");

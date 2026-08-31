@@ -1,5 +1,5 @@
 import { mkdir } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, resolve } from "node:path";
 
 import { loadCapture } from "./capture.ts";
 import { createCaptureHandler, makeCaptureConfig } from "./recorder.ts";
@@ -9,6 +9,7 @@ interface ReferenceConfig {
   readonly corpusId: string;
   readonly healthTimeoutMs: number;
   readonly openCodeRoot: string;
+  readonly opencodeBin: string;
   readonly opencodeArgv: readonly string[];
   readonly outputPath: string;
   readonly t3Root: string;
@@ -22,6 +23,7 @@ interface ReferenceManifest {
   readonly corpusId: string;
   readonly generatedAt: string;
   readonly opencodeArgv: readonly string[];
+  readonly runId: string;
   readonly scenarioOutput?: string;
   readonly status: "failed" | "passed";
   readonly t3Argv: readonly string[];
@@ -81,6 +83,20 @@ async function pinnedCommit(root: string, name: string): Promise<string> {
   return output.trim();
 }
 
+async function assertCleanCheckout(root: string, name: string): Promise<void> {
+  const process = Bun.spawn({
+    cmd: ["git", "-C", root, "status", "--porcelain", "--untracked-files=no"],
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const output = await new Response(process.stdout).text();
+  const exitCode = await process.exited;
+  if (exitCode !== 0)
+    throw new Error(`${name} checkout status could not be read.`);
+  if (output.trim().length > 0)
+    throw new Error(`${name} checkout has tracked changes; use a clean pin.`);
+}
+
 async function verifyPinnedCheckouts(
   t3Root: string,
   openCodeRoot: string
@@ -103,6 +119,10 @@ async function verifyPinnedCheckouts(
     pinnedCommit(t3Root, "T3"),
     pinnedCommit(openCodeRoot, "OpenCode"),
   ]);
+  await Promise.all([
+    assertCleanCheckout(t3Root, "T3"),
+    assertCleanCheckout(openCodeRoot, "OpenCode"),
+  ]);
   if (actualT3 !== t3)
     throw new Error(`T3 checkout is ${actualT3}, expected pinned ${t3}.`);
   if (actualOpenCode !== openCode)
@@ -111,19 +131,10 @@ async function verifyPinnedCheckouts(
     );
 }
 
-const REQUIRED_REFERENCE_SCENARIOS = [
-  "C01",
-  "C02",
-  "C03",
-  "C04",
-  "C05",
-  "C06",
-  "C11",
-  "C13",
-  "C14",
-  "C17",
-  "C18",
-] as const;
+const REQUIRED_REFERENCE_SCENARIOS = Array.from(
+  { length: 19 },
+  (_unused, index) => `C${String(index + 1).padStart(2, "0")}`
+);
 
 async function validateScenarioOutput(
   path: string,
@@ -149,11 +160,14 @@ async function validateScenarioOutput(
   const scenarios = parsed.scenarios;
   if (!Array.isArray(scenarios) || scenarios.length === 0)
     throw new Error(`Scenario report ${path} has no scenarios.`);
-  const ids = new Set(
-    scenarios.flatMap((scenario) =>
-      isRecord(scenario) && isString(scenario.id) ? [scenario.id] : []
-    )
-  );
+  const ids = new Set<string>();
+  for (const scenario of scenarios) {
+    if (!isRecord(scenario) || !isString(scenario.id))
+      throw new Error(`Scenario report ${path} contains an invalid scenario.`);
+    if (ids.has(scenario.id))
+      throw new Error(`Scenario report ${path} repeats ${scenario.id}.`);
+    ids.add(scenario.id);
+  }
   for (const id of REQUIRED_REFERENCE_SCENARIOS) {
     if (!ids.has(id))
       throw new Error(`Scenario report ${path} is missing ${id}.`);
@@ -176,12 +190,22 @@ async function configFromEnv(): Promise<ReferenceConfig> {
     );
   const outputPath =
     Bun.env.REFERENCE_OUTPUT ?? `artifacts/runs/${corpusId}.reference.json`;
+  const opencodeArgv = readArgv("REFERENCE_OPENCODE_ARGV");
+  if (!opencodeArgv.some((part) => part.includes("%OPENCODE_BIN%")))
+    throw new Error(
+      "REFERENCE_OPENCODE_ARGV must include %OPENCODE_BIN% so the pinned OpenCode binary is executed."
+    );
+  if (!opencodeArgv.some((part) => part.includes("%PORT%")))
+    throw new Error(
+      "REFERENCE_OPENCODE_ARGV must include %PORT% so the supervisor can isolate the server."
+    );
   return {
     capturePath: Bun.env.CAPTURE_OUTPUT ?? `artifacts/raw/${corpusId}.jsonl`,
     corpusId,
     healthTimeoutMs: Number(Bun.env.REFERENCE_HEALTH_TIMEOUT_MS ?? 30_000),
     openCodeRoot: requiredEnv("OPENCODE_REFERENCE_ROOT"),
-    opencodeArgv: readArgv("REFERENCE_OPENCODE_ARGV"),
+    opencodeBin: requiredEnv("OPENCODE_REFERENCE_BIN"),
+    opencodeArgv,
     outputPath,
     t3Root: requiredEnv("T3_REFERENCE_ROOT"),
     t3Argv: readArgv("REFERENCE_T3_ARGV"),
@@ -232,8 +256,20 @@ async function runReference(
   assertDuration(config.healthTimeoutMs, "REFERENCE_HEALTH_TIMEOUT_MS");
   assertDuration(config.timeoutMs, "REFERENCE_TIMEOUT_MS");
   await verifyPinnedCheckouts(config.t3Root, config.openCodeRoot);
+  const opencodeBin = resolve(config.openCodeRoot, config.opencodeBin);
+  if (!opencodeBin.startsWith(`${resolve(config.openCodeRoot)}/`))
+    throw new Error(
+      "OPENCODE_REFERENCE_BIN must be inside the pinned checkout."
+    );
+  if (!(await Bun.file(opencodeBin).exists()))
+    throw new Error(`OpenCode executable does not exist: ${opencodeBin}`);
   const reserved = reservePort();
-  const opencodeArgv = replacePort(config.opencodeArgv, reserved.port);
+  const opencodeArgv = replacePort(
+    config.opencodeArgv.map((part) =>
+      part.replaceAll("%OPENCODE_BIN%", opencodeBin)
+    ),
+    reserved.port
+  );
   reserved.release();
   const runId = crypto.randomUUID();
   const startedAtMs = Date.now();
@@ -274,6 +310,7 @@ async function runReference(
       corpusId: config.corpusId,
       generatedAt: new Date().toISOString(),
       opencodeArgv,
+      runId,
       scenarioOutput,
       status,
       t3Argv: config.t3Argv,
@@ -315,6 +352,28 @@ async function runReference(
       )
     )
       throw new Error("Capture contains records from another run.");
+    const capturedScenarios = new Set(
+      records.flatMap((record) => {
+        const scenario = record.correlation?.["x-contract-scenario"];
+        return scenario === undefined || scenario === "unknown"
+          ? []
+          : [scenario];
+      })
+    );
+    if (
+      records.some(
+        (record) => record.correlation?.["x-contract-scenario"] === "unknown"
+      )
+    )
+      throw new Error(
+        "Capture contains an exchange without scenario correlation."
+      );
+    for (const scenario of REQUIRED_REFERENCE_SCENARIOS) {
+      if (!capturedScenarios.has(scenario))
+        throw new Error(
+          `Capture is missing scenario correlation for ${scenario}.`
+        );
+    }
     await validateScenarioOutput(
       scenarioOutput,
       config.corpusId,

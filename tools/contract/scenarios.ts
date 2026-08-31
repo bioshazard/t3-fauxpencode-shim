@@ -401,30 +401,45 @@ function finalizeScenarios(
         break;
       case "C06":
         check(0, 204);
+        check(1, 200);
         if (!scenario.observedEventTypes.includes("turn.completed"))
           failures.push("no turn.completed event observed");
+        if (!Array.isArray(operationBody(scenario.operations[1])))
+          failures.push("final history response is not an array");
         break;
       case "C11":
         check(0, 204);
         check(1, 200);
+        check(2, 200);
         if (!barriersAvailable) failures.push("C11 barrier was not provided");
         if (scenario.barrierValid !== true)
           failures.push("C11 barrier did not prove an active turn");
         if (scenario.abortValid !== true)
           failures.push("abort-specific terminal status was not observed");
+        if (!Array.isArray(operationBody(scenario.operations[2])))
+          failures.push("post-abort history response is not an array");
         break;
       case "C13":
         check(0, 200);
         check(1, 200);
         check(2, 200);
+        if (!Array.isArray(operationBody(scenario.operations[0])))
+          failures.push("pre-revert history response is not an array");
+        if (!isRecord(operationBody(scenario.operations[1])))
+          failures.push("revert response is not an object");
+        if (!Array.isArray(operationBody(scenario.operations[2])))
+          failures.push("post-revert history response is not an array");
         break;
       case "C14":
         check(0, 204);
         check(1, 200);
         if (!scenario.observedEventTypes.includes("turn.completed"))
           failures.push("no post-rollback completion event observed");
-        if (!Array.isArray(operationBody(scenario.operations[1])))
+        const history = operationBody(scenario.operations[1]);
+        if (!Array.isArray(history))
           failures.push("post-rollback history response is not an array");
+        else if (history.length === 0)
+          failures.push("post-rollback history response was empty");
         break;
       case "C17":
         scenario.operations.forEach((_operation, index) =>
@@ -573,11 +588,18 @@ export async function runScenarios(
     );
     const sse = await stream.done;
     const observedEventTypes = sse.eventTypes;
+    const completedHistory = await call(
+      baseUrl,
+      "GET",
+      `${sessionPath}/message`,
+      undefined,
+      context("C06", sessionId)
+    );
     results.push({
       expectedTerminal: "prompt response plus terminal SSE event",
       id: "C06",
       observedEventTypes,
-      operations: [prompt],
+      operations: [prompt, completedHistory],
       sessionId,
     });
   } catch (error) {
@@ -719,13 +741,20 @@ export async function runScenarios(
     );
     const promptResult = await prompt;
     const abortEvents = await abortStream.done;
+    const abortHistory = await call(
+      baseUrl,
+      "GET",
+      `${sessionPath}/message`,
+      undefined,
+      context("C11", sessionId)
+    );
     results.push({
       expectedTerminal: "active turn abort returns and closes the stream",
       id: "C11",
       observedEventTypes: abortEvents.eventTypes,
       abortValid: abortEvents.terminalStatuses.includes("aborted"),
       barrierValid: abortBarrierValid,
-      operations: [promptResult, abort],
+      operations: [promptResult, abort, abortHistory],
       sessionId,
     });
   } catch (error) {
@@ -824,10 +853,12 @@ export async function runScenarios(
         ],
         operations: [secondCreate, firstPrompt, secondPrompt],
         scopeValid:
+          firstEvents.terminal &&
           firstEvents.sessionIDs.includes(sessionId) &&
           firstEvents.sessionIDs.every(
             (observed) => observed === "" || observed === sessionId
           ) &&
+          secondEvents.terminal &&
           secondEvents.sessionIDs.includes(secondId) &&
           secondEvents.sessionIDs.every(
             (observed) => observed === "" || observed === secondId
@@ -887,12 +918,31 @@ if (import.meta.main) {
   const output = Bun.env.SCENARIO_OUTPUT ?? "artifacts/runs/latest.json";
   const corpusId = Bun.env.CORPUS_ID ?? null;
   const runId = Bun.env.CONTRACT_RUN_ID ?? Bun.env.SCENARIO_RUN_ID;
-  const report = await runScenarios(
-    baseUrl,
-    corpusId,
-    15_000,
-    runId === undefined ? {} : { runId }
-  );
+  const barrierUrl = Bun.env.SCENARIO_BARRIER_URL;
+  const barrier =
+    barrierUrl === undefined
+      ? undefined
+      : {
+          waitFor: async (name: string): Promise<boolean> => {
+            try {
+              const url = new URL("/wait", barrierUrl);
+              url.searchParams.set("name", name);
+              const response = await fetch(url, { method: "POST" });
+              if (!response.ok) return false;
+              const body = await response.text();
+              if (body.trim().length === 0) return true;
+              const parsed = parsedBody(body);
+              return isRecord(parsed) ? parsed.active === true : false;
+            } catch {
+              return false;
+            }
+          },
+        };
+  const report = await runScenarios(baseUrl, corpusId, 15_000, {
+    ...(barrier === undefined ? {} : { barrier }),
+    ...(runId === undefined ? {} : { runId }),
+  });
   await Bun.write(output, `${JSON.stringify(report, null, 2)}\n`);
   console.log(`scenario run ${report.status}; wrote ${output}`);
+  if (report.status !== "completed") process.exitCode = 1;
 }

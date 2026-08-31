@@ -48,4 +48,15 @@ describe("capture validation", () => {
       "unredacted authorization"
     );
   });
+
+  test("rejects empty correlation values", () => {
+    const value = record(1);
+    value.correlation = {
+      "x-contract-run-id": "",
+      "x-contract-scenario": "C01",
+    };
+    expect(() => validateCaptureRecords([value])).toThrow(
+      "correlation is missing x-contract-run-id"
+    );
+  });
 });
