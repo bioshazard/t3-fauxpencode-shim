@@ -35,6 +35,31 @@ function readString(
   return String(value);
 }
 
+function dataUrlImage(record: JsonObject): PromptImage | null {
+  const data = readString(record, "data");
+  const mime = readString(record, "mimeType") ?? readString(record, "mime");
+  if (
+    data !== undefined &&
+    data !== null &&
+    mime !== undefined &&
+    mime !== null
+  ) {
+    return { data, mimeType: mime };
+  }
+  const url = readString(record, "url");
+  if (url === undefined || url === null || !url.startsWith("data:"))
+    return null;
+  const comma = url.indexOf(",");
+  if (comma < 0) return null;
+  const metadata = url.slice(5, comma).split(";");
+  const mimeType = metadata[0] ?? "application/octet-stream";
+  const payload = url.slice(comma + 1);
+  return {
+    data: metadata.includes("base64") ? payload : btoa(payload),
+    mimeType,
+  };
+}
+
 export async function readCreateSessionRequest(
   request: Request,
   fallbackCwd: string
@@ -101,17 +126,8 @@ export async function readPromptRequest(
       const partType = readString(partRecord, "type");
       if (partType === "text") continue;
       if (partType !== "file" && partType !== "image") continue;
-      const data = readString(partRecord, "data");
-      const mimeType =
-        readString(partRecord, "mimeType") ?? readString(partRecord, "mime");
-      if (
-        data !== undefined &&
-        data !== null &&
-        mimeType !== undefined &&
-        mimeType !== null
-      ) {
-        images.push({ data, mimeType });
-      }
+      const image = dataUrlImage(partRecord);
+      if (image !== null) images.push(image);
     }
   }
   const modelRecord = asObject(record.model as JsonValue);

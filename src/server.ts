@@ -165,6 +165,26 @@ function createSessionHandler(
       /^\/session\/([^/]+)(\/message|\/prompt|\/prompt_async|\/abort|\/revert|\/event)?$/u.exec(
         url.pathname
       );
+    const messagePath = /^\/session\/([^/]+)\/message\/([^/]+)$/u.exec(
+      url.pathname
+    );
+    if (messagePath !== null) {
+      if (request.method !== "GET") return methodNotAllowed(request);
+      const sessionId = decodeURIComponent(messagePath[1] ?? "");
+      const messageId = decodeURIComponent(messagePath[2] ?? "");
+      return sessions.getSnapshot(sessionId).then((snapshot) => {
+        if (snapshot === null) return notFound();
+        const entry = messagesResponse(snapshot, config).find((candidate) => {
+          const info = candidate.info;
+          if (Object.prototype.toString.call(info) !== "[object Object]") {
+            return false;
+          }
+          const record = info as { readonly id?: JsonValue };
+          return record.id === messageId;
+        });
+        return entry === undefined ? notFound() : jsonResponse(entry);
+      });
+    }
     if (sessionPath !== null) {
       const sessionId = decodeURIComponent(sessionPath[1] ?? "");
       const operation = sessionPath[2];
