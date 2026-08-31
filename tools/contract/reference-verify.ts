@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { loadCapture } from "./capture.ts";
 import {
   decodeReferenceManifest,
-  REQUIRED_REFERENCE_SCENARIOS,
+  isRequiredReferenceScenario,
   sha256File,
   validateCompletedScenarioReport,
   type ReferenceManifest,
@@ -56,10 +56,7 @@ export async function verifyReferenceArtifacts(
     if (record.correlation?.["x-contract-run-id"] !== manifest.runId)
       throw new Error("Reference capture contains a record from another run.");
     const scenario = record.correlation?.["x-contract-scenario"];
-    if (
-      scenario === undefined ||
-      !REQUIRED_REFERENCE_SCENARIOS.includes(scenario)
-    )
+    if (scenario === undefined || !isRequiredReferenceScenario(scenario))
       throw new Error(
         "Reference capture contains an exchange without a known scenario."
       );

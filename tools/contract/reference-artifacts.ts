@@ -5,6 +5,10 @@ export const REQUIRED_REFERENCE_SCENARIOS = Array.from(
   (_unused, index) => `C${String(index + 1).padStart(2, "0")}`
 );
 
+export function isRequiredReferenceScenario(value: string): boolean {
+  return REQUIRED_REFERENCE_SCENARIOS.includes(value);
+}
+
 export interface ReferenceManifest {
   readonly captureSha256?: string;
   readonly capturePath: string;
@@ -22,7 +26,11 @@ export interface ReferenceManifest {
 }
 
 export interface ScenarioReportEntry {
+  readonly expectedTerminal: string;
+  readonly failures: readonly string[];
   readonly id: string;
+  readonly observedEventTypes: readonly string[];
+  readonly operations: readonly unknown[];
   readonly passed: boolean;
   readonly [key: string]: unknown;
 }
@@ -34,11 +42,11 @@ export interface ScenarioReport {
   readonly status: "completed" | "partial";
 }
 
-function isString(value: unknown): value is string {
+export function isStringValue(value: unknown): value is string {
   return Object.prototype.toString.call(value) === "[object String]";
 }
 
-function isRecord(
+export function isRecordValue(
   value: unknown
 ): value is { readonly [key: string]: unknown } {
   return Object.prototype.toString.call(value) === "[object Object]";
@@ -50,7 +58,8 @@ function requiredString(
   message: string
 ): string {
   const result = value[key];
-  if (!isString(result) || result.trim().length === 0) throw new Error(message);
+  if (!isStringValue(result) || result.trim().length === 0)
+    throw new Error(message);
   return result;
 }
 
@@ -62,7 +71,7 @@ function readManifestArgv(
   if (
     !Array.isArray(result) ||
     result.length === 0 ||
-    !result.every((item) => isString(item) && item.trim().length > 0)
+    !result.every((item) => isStringValue(item) && item.trim().length > 0)
   )
     throw new Error(
       `Reference manifest ${key} must be a non-empty argv array.`
@@ -100,7 +109,7 @@ function readOptionalSha256(
 }
 
 export function decodeReferenceManifest(value: unknown): ReferenceManifest {
-  if (!isRecord(value))
+  if (!isRecordValue(value))
     throw new Error("Reference manifest must be an object.");
   const client = value.client;
   const status = value.status;
@@ -160,7 +169,8 @@ export function decodeReferenceManifest(value: unknown): ReferenceManifest {
 }
 
 export function decodeScenarioReport(value: unknown): ScenarioReport {
-  if (!isRecord(value)) throw new Error("Scenario report must be an object.");
+  if (!isRecordValue(value))
+    throw new Error("Scenario report must be an object.");
   const status = value.status;
   if (status !== "completed" && status !== "partial")
     throw new Error("Scenario report status is invalid.");
@@ -175,7 +185,7 @@ export function decodeScenarioReport(value: unknown): ScenarioReport {
     ),
     runId: requiredString(value, "runId", "Scenario report runId is required."),
     scenarios: scenarios.map((scenario, index) => {
-      if (!isRecord(scenario))
+      if (!isRecordValue(scenario))
         throw new Error(`Scenario report entry ${index} must be an object.`);
       const id = requiredString(
         scenario,
@@ -186,7 +196,45 @@ export function decodeScenarioReport(value: unknown): ScenarioReport {
         throw new Error(`Scenario report entry ${id} has an invalid id.`);
       if (scenario.passed !== true && scenario.passed !== false)
         throw new Error(`Scenario report entry ${id} passed must be boolean.`);
-      return { ...scenario, id, passed: scenario.passed };
+      const expectedTerminal = scenario.expectedTerminal;
+      if (
+        !isStringValue(expectedTerminal) ||
+        expectedTerminal.trim().length === 0
+      )
+        throw new Error(
+          `Scenario report entry ${id} expectedTerminal must be non-empty.`
+        );
+      const operations = scenario.operations;
+      if (!Array.isArray(operations) || operations.length === 0)
+        throw new Error(
+          `Scenario report entry ${id} operations must be non-empty.`
+        );
+      const observedEventTypes = scenario.observedEventTypes;
+      if (
+        !Array.isArray(observedEventTypes) ||
+        !observedEventTypes.every(isStringValue)
+      )
+        throw new Error(
+          `Scenario report entry ${id} observedEventTypes must be string[].`
+        );
+      const failures = scenario.failures;
+      if (!Array.isArray(failures) || !failures.every(isStringValue))
+        throw new Error(
+          `Scenario report entry ${id} failures must be string[].`
+        );
+      if (scenario.passed === true && failures.length > 0)
+        throw new Error(
+          `Scenario report entry ${id} is passed but contains failures.`
+        );
+      return {
+        ...scenario,
+        expectedTerminal,
+        failures,
+        id,
+        observedEventTypes,
+        operations,
+        passed: scenario.passed,
+      };
     }),
     status,
   };

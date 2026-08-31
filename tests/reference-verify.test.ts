@@ -11,6 +11,17 @@ function digest(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
+function scenarioEntry(id: string): Record<string, unknown> {
+  return {
+    expectedTerminal: "terminal",
+    failures: [],
+    id,
+    observedEventTypes: [],
+    operations: [{ method: "GET", path: "/", status: 200 }],
+    passed: true,
+  };
+}
+
 function captureRecord(): Record<string, unknown> {
   return {
     body: {
@@ -47,10 +58,7 @@ describe("reference corpus verification", () => {
       corpusId: "corpus",
       generatedAt: "2026-08-31T12:00:00.000Z",
       runId: "run",
-      scenarios: REQUIRED_REFERENCE_SCENARIOS.map((id) => ({
-        id,
-        passed: true,
-      })),
+      scenarios: REQUIRED_REFERENCE_SCENARIOS.map(scenarioEntry),
       status: "completed",
     });
     await Bun.write(capturePath, capture);
@@ -99,10 +107,7 @@ describe("reference corpus verification", () => {
       corpusId: "corpus",
       generatedAt: "2026-08-31T12:00:00.000Z",
       runId: "run",
-      scenarios: REQUIRED_REFERENCE_SCENARIOS.map((id) => ({
-        id,
-        passed: true,
-      })),
+      scenarios: REQUIRED_REFERENCE_SCENARIOS.map(scenarioEntry),
       status: "completed",
     });
     await Bun.write(capturePath, capture);

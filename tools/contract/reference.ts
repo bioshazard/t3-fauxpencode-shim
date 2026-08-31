@@ -6,6 +6,9 @@ import { createCaptureHandler, makeCaptureConfig } from "./recorder.ts";
 import {
   REQUIRED_REFERENCE_SCENARIOS,
   decodeReferenceManifest,
+  isRecordValue,
+  isRequiredReferenceScenario,
+  isStringValue,
   sha256File,
   type ReferenceManifest,
   validateCompletedScenarioReport,
@@ -24,16 +27,6 @@ interface ReferenceConfig {
   readonly timeoutMs: number;
 }
 
-function isString(value: unknown): value is string {
-  return Object.prototype.toString.call(value) === "[object String]";
-}
-
-function isRecord(
-  value: unknown
-): value is { readonly [key: string]: unknown } {
-  return Object.prototype.toString.call(value) === "[object Object]";
-}
-
 function readArgv(name: string): readonly string[] {
   const raw = Bun.env[name];
   if (raw === undefined || raw.trim().length === 0)
@@ -47,7 +40,7 @@ function readArgv(name: string): readonly string[] {
   if (
     !Array.isArray(parsed) ||
     parsed.length === 0 ||
-    !parsed.every(isString) ||
+    !parsed.every(isStringValue) ||
     parsed.some((part) => part.trim().length === 0)
   )
     throw new Error(`${name} must be a non-empty JSON array of argv strings.`);
@@ -99,16 +92,17 @@ async function verifyPinnedCheckouts(
   const manifest = (await Bun.file(
     new URL("../../contracts/manifest.json", import.meta.url)
   ).json()) as unknown;
-  if (!isRecord(manifest)) throw new Error("Pinned manifest is invalid.");
+  if (!isRecordValue(manifest)) throw new Error("Pinned manifest is invalid.");
   const t3 =
-    isRecord(manifest.subjects) && isRecord(manifest.subjects.t3Code)
+    isRecordValue(manifest.subjects) && isRecordValue(manifest.subjects.t3Code)
       ? manifest.subjects.t3Code.commit
       : undefined;
   const openCode =
-    isRecord(manifest.subjects) && isRecord(manifest.subjects.openCode)
+    isRecordValue(manifest.subjects) &&
+    isRecordValue(manifest.subjects.openCode)
       ? manifest.subjects.openCode.commit
       : undefined;
-  if (!isString(t3) || !isString(openCode))
+  if (!isStringValue(t3) || !isStringValue(openCode))
     throw new Error("Pinned manifest is missing upstream commits.");
   const [actualT3, actualOpenCode] = await Promise.all([
     pinnedCommit(t3Root, "T3"),
@@ -329,8 +323,7 @@ async function runReference(
     const capturedScenarios = new Set(
       records.flatMap((record) => {
         const scenario = record.correlation?.["x-contract-scenario"];
-        return scenario === undefined ||
-          !REQUIRED_REFERENCE_SCENARIOS.includes(scenario)
+        return scenario === undefined || !isRequiredReferenceScenario(scenario)
           ? []
           : [scenario];
       })
@@ -338,10 +331,7 @@ async function runReference(
     if (
       records.some((record) => {
         const scenario = record.correlation?.["x-contract-scenario"];
-        return (
-          scenario === undefined ||
-          !REQUIRED_REFERENCE_SCENARIOS.includes(scenario)
-        );
+        return scenario === undefined || !isRequiredReferenceScenario(scenario);
       })
     )
       throw new Error(

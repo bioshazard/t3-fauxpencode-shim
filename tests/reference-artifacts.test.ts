@@ -13,7 +13,14 @@ function report(
     corpusId: "corpus",
     generatedAt: "2026-08-31T12:00:00.000Z",
     runId: "run",
-    scenarios: REQUIRED_REFERENCE_SCENARIOS.map((id) => ({ id, passed: true })),
+    scenarios: REQUIRED_REFERENCE_SCENARIOS.map((id) => ({
+      expectedTerminal: "terminal",
+      failures: [],
+      id,
+      observedEventTypes: [],
+      operations: [{ method: "GET", path: "/", status: 200 }],
+      passed: true,
+    })),
     status: "completed",
     ...overrides,
   };
@@ -47,7 +54,14 @@ describe("reference artifact validation", () => {
         report({
           scenarios: [
             ...((report().scenarios as unknown[]) ?? []),
-            { id: "C01", passed: true },
+            {
+              expectedTerminal: "terminal",
+              failures: [],
+              id: "C01",
+              observedEventTypes: [],
+              operations: [{ method: "GET", path: "/", status: 200 }],
+              passed: true,
+            },
           ],
         }),
         { corpusId: "corpus", runId: "run" }
