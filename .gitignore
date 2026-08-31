@@ -3,5 +3,7 @@ node_modules/
 coverage/
 artifacts/
 dist/
+playwright-report/
+test-results/
 .env
 .env.local
