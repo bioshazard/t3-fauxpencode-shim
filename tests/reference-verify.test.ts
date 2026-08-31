@@ -16,6 +16,8 @@ function digest(value: string): string {
 function scenarioEntry(id: string): Record<string, unknown> {
   return {
     applicability: "required",
+    canonicalState: { id },
+    declaredState: { id },
     expectedTerminal: "terminal",
     failures: [],
     id,
@@ -77,7 +79,7 @@ function captureRecord(
       "x-contract-scenario": scenario,
     },
     durationMs: 1,
-    request: { headers: {}, method: "GET", path: "/global/health", query: {} },
+    request: { headers: {}, method: "GET", path: "/", query: {} },
     response: { headers: {}, status: 200 },
     sequence,
     startedAt: "2026-08-31T12:00:00.000Z",

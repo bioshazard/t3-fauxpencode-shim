@@ -10,6 +10,8 @@ interface OperationResult {
 
 export interface ScenarioResult {
   readonly applicability: "required" | "not-applicable";
+  readonly canonicalState: unknown;
+  readonly declaredState: unknown;
   readonly expectedTerminal: string;
   readonly failures: readonly string[];
   readonly id: string;
@@ -21,9 +23,11 @@ export interface ScenarioResult {
 
 type ScenarioResultInput = Omit<
   ScenarioResult,
-  "applicability" | "failures" | "passed"
+  "applicability" | "canonicalState" | "declaredState" | "failures" | "passed"
 > & {
   readonly applicability?: "required" | "not-applicable";
+  readonly canonicalState?: unknown;
+  readonly declaredState?: unknown;
   readonly abortValid?: boolean;
   readonly barrierValid?: boolean;
   readonly scopeValid?: boolean;
@@ -469,6 +473,12 @@ function finalizeScenarios(
     return {
       ...publicScenario,
       applicability: scenario.applicability ?? "required",
+      canonicalState:
+        scenario.canonicalState ?? operationBody(scenario.operations.at(-1)),
+      declaredState: scenario.declaredState ?? {
+        scenario: scenario.id,
+        sessionId: scenario.sessionId ?? null,
+      },
       failures,
       passed: failures.length === 0,
     };

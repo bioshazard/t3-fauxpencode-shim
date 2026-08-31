@@ -15,6 +15,8 @@ function report(
     runId: "run",
     scenarios: REQUIRED_REFERENCE_SCENARIOS.map((id) => ({
       applicability: "required",
+      canonicalState: { id },
+      declaredState: { id },
       expectedTerminal: "terminal",
       failures: [],
       id,
@@ -87,6 +89,8 @@ describe("reference artifact validation", () => {
             ...((report().scenarios as unknown[]) ?? []),
             {
               applicability: "required",
+              canonicalState: { id: "C01" },
+              declaredState: { id: "C01" },
               expectedTerminal: "terminal",
               failures: [],
               id: "C01",

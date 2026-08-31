@@ -81,6 +81,8 @@ export interface ReferenceProvenance {
 
 export interface ScenarioReportEntry {
   readonly applicability: "required" | "not-applicable";
+  readonly canonicalState: unknown;
+  readonly declaredState: unknown;
   readonly expectedTerminal: string;
   readonly failures: readonly string[];
   readonly id: string;
@@ -461,6 +463,16 @@ export function decodeScenarioReport(value: unknown): ScenarioReport {
         throw new Error(
           `Scenario report entry ${id} required scenarios cannot have skipReason.`
         );
+      if (!Object.hasOwn(scenario, "declaredState"))
+        throw new Error(
+          `Scenario report entry ${id} declaredState evidence is required.`
+        );
+      if (!Object.hasOwn(scenario, "canonicalState"))
+        throw new Error(
+          `Scenario report entry ${id} canonicalState evidence is required.`
+        );
+      const declaredState = scenario.declaredState;
+      const canonicalState = scenario.canonicalState;
       const operations = scenario.operations;
       if (!Array.isArray(operations) || operations.length === 0)
         throw new Error(
@@ -489,6 +501,8 @@ export function decodeScenarioReport(value: unknown): ScenarioReport {
       return {
         ...scenario,
         applicability,
+        canonicalState,
+        declaredState,
         expectedTerminal,
         failures,
         id,

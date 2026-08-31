@@ -9,6 +9,8 @@ import {
   validateReferenceCorrelations,
   validateCompletedScenarioReport,
   type ReferenceManifest,
+  type ScenarioOperation,
+  type ScenarioReport,
 } from "./reference-artifacts.ts";
 
 type JsonRecord = { readonly [key: string]: unknown };
@@ -116,6 +118,56 @@ async function validatePinnedIdentity(
     throw new Error("Reference manifest does not match pinned corpus.");
 }
 
+function operationMatches(
+  operation: ScenarioOperation,
+  record: {
+    readonly request: { readonly method: string; readonly path: string };
+    readonly response?: { readonly status: number };
+  }
+): boolean {
+  if (
+    record.request.method.toUpperCase() !== operation.method.toUpperCase() ||
+    record.request.path !== operation.path
+  )
+    return false;
+  if (operation.status === null) return record.response === undefined;
+  return record.response?.status === operation.status;
+}
+
+function validateScenarioOperations(
+  report: ScenarioReport,
+  records: readonly {
+    readonly correlation?: Readonly<Record<string, string>>;
+    readonly request: { readonly method: string; readonly path: string };
+    readonly response?: { readonly status: number };
+  }[]
+): void {
+  const byScenario = new Map<string, Array<(typeof records)[number]>>();
+  for (const record of records) {
+    const id = record.correlation?.["x-contract-scenario"];
+    if (id === undefined) continue;
+    const entries = byScenario.get(id) ?? [];
+    entries.push(record);
+    byScenario.set(id, entries);
+  }
+  for (const scenario of report.scenarios) {
+    if (scenario.applicability === "not-applicable") continue;
+    const captured = byScenario.get(scenario.id) ?? [];
+    let offset = 0;
+    for (const [index, operation] of scenario.operations.entries()) {
+      const match = captured.findIndex(
+        (record, recordIndex) =>
+          recordIndex >= offset && operationMatches(operation, record)
+      );
+      if (match < 0)
+        throw new Error(
+          `Scenario ${scenario.id} operation ${index + 1} has no matching raw capture.`
+        );
+      offset = match + 1;
+    }
+  }
+}
+
 export async function verifyReferenceArtifacts(
   manifestPath: string
 ): Promise<ReferenceManifest> {
@@ -167,6 +219,7 @@ export async function verifyReferenceArtifacts(
         `Reference capture is missing raw capture for ${scenario.id}.`
       );
   }
+  validateScenarioOperations(report, records);
 
   return manifest;
 }
