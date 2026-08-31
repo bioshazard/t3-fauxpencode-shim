@@ -80,12 +80,14 @@ export interface ReferenceProvenance {
 }
 
 export interface ScenarioReportEntry {
+  readonly applicability: "required" | "not-applicable";
   readonly expectedTerminal: string;
   readonly failures: readonly string[];
   readonly id: string;
   readonly observedEventTypes: readonly string[];
   readonly operations: readonly ScenarioOperation[];
   readonly passed: boolean;
+  readonly skipReason?: string;
   readonly [key: string]: unknown;
 }
 
@@ -442,6 +444,23 @@ export function decodeScenarioReport(value: unknown): ScenarioReport {
         throw new Error(
           `Scenario report entry ${id} expectedTerminal must be non-empty.`
         );
+      const applicability = scenario.applicability;
+      if (applicability !== "required" && applicability !== "not-applicable")
+        throw new Error(
+          `Scenario report entry ${id} applicability must be required or not-applicable.`
+        );
+      const skipReason = scenario.skipReason;
+      if (
+        applicability === "not-applicable" &&
+        (!isStringValue(skipReason) || skipReason.trim().length === 0)
+      )
+        throw new Error(
+          `Scenario report entry ${id} not-applicable scenarios need skipReason.`
+        );
+      if (applicability === "required" && skipReason !== undefined)
+        throw new Error(
+          `Scenario report entry ${id} required scenarios cannot have skipReason.`
+        );
       const operations = scenario.operations;
       if (!Array.isArray(operations) || operations.length === 0)
         throw new Error(
@@ -469,12 +488,16 @@ export function decodeScenarioReport(value: unknown): ScenarioReport {
         );
       return {
         ...scenario,
+        applicability,
         expectedTerminal,
         failures,
         id,
         observedEventTypes,
         operations: decodedOperations,
         passed: scenario.passed,
+        ...(skipReason === undefined
+          ? {}
+          : { skipReason: skipReason as string }),
       };
     }),
     status,
@@ -504,8 +527,12 @@ export function validateCompletedScenarioReport(
     ids.add(scenario.id);
     if (!requiredSet.has(scenario.id))
       throw new Error(`Scenario report contains unexpected ${scenario.id}.`);
-    if (!scenario.passed)
+    if (scenario.applicability === "required" && !scenario.passed)
       throw new Error(`Scenario report contains failed ${scenario.id}.`);
+    if (scenario.applicability === "not-applicable" && !scenario.passed)
+      throw new Error(
+        `Scenario report contains a failed not-applicable ${scenario.id}.`
+      );
   }
   for (const id of required) {
     if (!ids.has(id)) throw new Error(`Scenario report is missing ${id}.`);

@@ -9,6 +9,7 @@ interface OperationResult {
 }
 
 export interface ScenarioResult {
+  readonly applicability: "required" | "not-applicable";
   readonly expectedTerminal: string;
   readonly failures: readonly string[];
   readonly id: string;
@@ -18,7 +19,11 @@ export interface ScenarioResult {
   readonly sessionId?: string;
 }
 
-type ScenarioResultInput = Omit<ScenarioResult, "failures" | "passed"> & {
+type ScenarioResultInput = Omit<
+  ScenarioResult,
+  "applicability" | "failures" | "passed"
+> & {
+  readonly applicability?: "required" | "not-applicable";
   readonly abortValid?: boolean;
   readonly barrierValid?: boolean;
   readonly scopeValid?: boolean;
@@ -463,6 +468,7 @@ function finalizeScenarios(
     } = scenario;
     return {
       ...publicScenario,
+      applicability: scenario.applicability ?? "required",
       failures,
       passed: failures.length === 0,
     };

@@ -14,6 +14,7 @@ function report(
     generatedAt: "2026-08-31T12:00:00.000Z",
     runId: "run",
     scenarios: REQUIRED_REFERENCE_SCENARIOS.map((id) => ({
+      applicability: "required",
       expectedTerminal: "terminal",
       failures: [],
       id,
@@ -85,6 +86,7 @@ describe("reference artifact validation", () => {
           scenarios: [
             ...((report().scenarios as unknown[]) ?? []),
             {
+              applicability: "required",
               expectedTerminal: "terminal",
               failures: [],
               id: "C01",
@@ -111,6 +113,36 @@ describe("reference artifact validation", () => {
         runId: "run",
       })
     ).toThrow("missing C19");
+  });
+
+  test("accepts conditional scenarios only with an explicit skip reason", () => {
+    const scenarios = (
+      report().scenarios as Array<Record<string, unknown>>
+    ).map((entry) =>
+      entry.id === "C07"
+        ? {
+            ...entry,
+            applicability: "not-applicable",
+            skipReason: "deterministic model emits no reasoning parts",
+          }
+        : entry
+    );
+    expect(
+      validateCompletedScenarioReport(report({ scenarios }), {
+        corpusId: "corpus",
+        runId: "run",
+      }).scenarios.find((scenario) => scenario.id === "C07")?.applicability
+    ).toBe("not-applicable");
+    expect(() =>
+      validateCompletedScenarioReport(
+        report({
+          scenarios: scenarios.map((entry) =>
+            entry.id === "C07" ? { ...entry, skipReason: undefined } : entry
+          ),
+        }),
+        { corpusId: "corpus", runId: "run" }
+      )
+    ).toThrow("need skipReason");
   });
 
   test("rejects forged scenario evidence", () => {

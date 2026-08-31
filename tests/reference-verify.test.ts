@@ -15,6 +15,7 @@ function digest(value: string): string {
 
 function scenarioEntry(id: string): Record<string, unknown> {
   return {
+    applicability: "required",
     expectedTerminal: "terminal",
     failures: [],
     id,

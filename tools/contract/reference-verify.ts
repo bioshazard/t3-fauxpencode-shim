@@ -161,6 +161,7 @@ export async function verifyReferenceArtifacts(
     manifest.runId
   );
   for (const scenario of report.scenarios) {
+    if (scenario.applicability === "not-applicable") continue;
     if (!capturedScenarios.has(scenario.id))
       throw new Error(
         `Reference capture is missing raw capture for ${scenario.id}.`
