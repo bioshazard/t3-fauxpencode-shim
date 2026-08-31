@@ -1,5 +1,5 @@
 import type { CreateSessionInput } from "./sessions.ts";
-import type { JsonValue } from "./types.ts";
+import type { JsonValue, PromptInput, PromptImage } from "./types.ts";
 
 type JsonObject = { readonly [key: string]: JsonValue };
 
@@ -12,7 +12,7 @@ export type CreateSessionRequest =
 
 export type PromptRequest =
   | { readonly kind: "error"; readonly message: string }
-  | { readonly kind: "ok"; readonly text: string };
+  | { readonly input: PromptInput; readonly kind: "ok" };
 
 export type RevertRequest =
   | { readonly kind: "error"; readonly message: string }
@@ -55,16 +55,18 @@ export async function readCreateSessionRequest(
 
   const cwd = readString(record, "cwd");
   const id = readString(record, "id");
-  if (cwd === null || id === null) {
+  const title = readString(record, "title");
+  if (cwd === null || id === null || title === null) {
     return {
       kind: "error",
-      message: "`cwd` and `id` must be strings when provided.",
+      message: "`cwd`, `id`, and `title` must be strings when provided.",
     };
   }
   return {
     input: {
       ...(cwd === undefined ? { cwd: fallbackCwd } : { cwd }),
       ...(id === undefined ? {} : { id }),
+      ...(title === undefined ? {} : { title }),
     },
     kind: "ok",
   };
@@ -89,19 +91,94 @@ export async function readPromptRequest(
     return { kind: "error", message: "Prompt body must be a JSON object." };
 
   const directText = readString(record, "text");
+  const prompt = readString(record, "prompt");
+  const images: PromptImage[] = [];
+  const parts = record.parts;
+  if (Array.isArray(parts)) {
+    for (const part of parts) {
+      const partRecord = asObject(part);
+      if (partRecord === null) continue;
+      const partType = readString(partRecord, "type");
+      if (partType === "text") continue;
+      if (partType !== "file" && partType !== "image") continue;
+      const data = readString(partRecord, "data");
+      const mimeType =
+        readString(partRecord, "mimeType") ?? readString(partRecord, "mime");
+      if (
+        data !== undefined &&
+        data !== null &&
+        mimeType !== undefined &&
+        mimeType !== null
+      ) {
+        images.push({ data, mimeType });
+      }
+    }
+  }
+  const modelRecord = asObject(record.model as JsonValue);
+  const providerId =
+    modelRecord === null ? undefined : readString(modelRecord, "providerID");
+  const modelId =
+    modelRecord === null ? undefined : readString(modelRecord, "modelID");
+  if (
+    providerId === null ||
+    modelId === null ||
+    (providerId !== undefined && modelId === undefined) ||
+    (providerId === undefined && modelId !== undefined)
+  ) {
+    return {
+      kind: "error",
+      message:
+        "`model.providerID` and `model.modelID` must be strings when provided.",
+    };
+  }
+  const agent = readString(record, "agent");
+  const variant = readString(record, "variant");
+  if (agent === null || variant === null) {
+    return {
+      kind: "error",
+      message: "`agent` and `variant` must be strings when provided.",
+    };
+  }
+  const messageId = readString(record, "messageID");
+  if (messageId === null)
+    return {
+      kind: "error",
+      message: "`messageID` must be a string when provided.",
+    };
   if (directText !== undefined && directText !== null) {
-    return { kind: "ok", text: directText };
+    return {
+      input: {
+        images,
+        text: directText,
+        ...(agent === undefined ? {} : { agent }),
+        ...(messageId === undefined ? {} : { messageId }),
+        ...(providerId === undefined || modelId === undefined
+          ? {}
+          : { model: { modelId, providerId } }),
+        ...(variant === undefined ? {} : { variant }),
+      },
+      kind: "ok",
+    };
   }
   if (directText === null)
     return { kind: "error", message: "`text` must be a string." };
-
-  const prompt = readString(record, "prompt");
   if (prompt !== undefined && prompt !== null)
-    return { kind: "ok", text: prompt };
+    return {
+      input: {
+        images,
+        text: prompt,
+        ...(agent === undefined ? {} : { agent }),
+        ...(messageId === undefined ? {} : { messageId }),
+        ...(providerId === undefined || modelId === undefined
+          ? {}
+          : { model: { modelId, providerId } }),
+        ...(variant === undefined ? {} : { variant }),
+      },
+      kind: "ok",
+    };
   if (prompt === null)
     return { kind: "error", message: "`prompt` must be a string." };
 
-  const parts = record.parts;
   if (!Array.isArray(parts)) {
     return {
       kind: "error",
@@ -114,7 +191,19 @@ export async function readPromptRequest(
     const partType = readString(partRecord, "type");
     const partText = readString(partRecord, "text");
     if (partType === "text" && partText !== null && partText !== undefined) {
-      return { kind: "ok", text: partText };
+      return {
+        input: {
+          images,
+          text: partText,
+          ...(agent === undefined ? {} : { agent }),
+          ...(messageId === undefined ? {} : { messageId }),
+          ...(providerId === undefined || modelId === undefined
+            ? {}
+            : { model: { modelId, providerId } }),
+          ...(variant === undefined ? {} : { variant }),
+        },
+        kind: "ok",
+      };
     }
   }
   return { kind: "error", message: "Prompt body needs a text part." };

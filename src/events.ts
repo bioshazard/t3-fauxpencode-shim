@@ -27,6 +27,16 @@ export class EventHub {
     const stream = new ReadableStream<Uint8Array>({
       start: (controller) => {
         controller.enqueue(encoder.encode(": connected\n\n"));
+        controller.enqueue(
+          encoder.encode(
+            frame({
+              id: crypto.randomUUID(),
+              properties: {},
+              sessionID: sessionID ?? "",
+              type: "server.connected",
+            })
+          )
+        );
         unsubscribe = this.subscribe((event) => {
           if (sessionID !== undefined && event.sessionID !== sessionID) return;
           controller.enqueue(encoder.encode(frame(event)));

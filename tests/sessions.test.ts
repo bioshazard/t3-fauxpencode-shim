@@ -29,12 +29,11 @@ describe("session registry facade", () => {
     const first = createHandler(config, new SessionRegistry(backend));
     const created = await first(post(JSON.stringify({ id: "thread-1" })));
 
-    expect(created.status).toBe(201);
+    expect(created.status).toBe(200);
     expect(await created.json()).toMatchObject({
-      cwd: "/tmp/poc",
       id: "thread-1",
-      messages: [],
-      status: "idle",
+      directory: "/tmp/poc",
+      title: "Pi session thread-1",
     });
 
     const listed = await first(new Request("http://shim.test/session"));
@@ -62,7 +61,7 @@ describe("session registry facade", () => {
 
     const created = await handler(post(JSON.stringify({ id: "same" })));
     const duplicate = await handler(post(JSON.stringify({ id: "same" })));
-    expect(created.status).toBe(201);
+    expect(created.status).toBe(200);
     expect(duplicate.status).toBe(409);
   });
 

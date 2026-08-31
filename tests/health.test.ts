@@ -33,16 +33,26 @@ describe("health and discovery", () => {
     const response = await request("/provider");
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({
-      default: "pi",
-      providers: [
+    const body = await response.json();
+    expect(body).toEqual({
+      all: [
         {
+          env: [],
           id: "pi",
-          models: [{ id: "test-model", name: "test-model" }],
+          models: expect.any(Object),
           name: "Pi",
+          options: {},
+          source: "custom",
         },
       ],
+      connected: ["pi"],
+      default: { pi: "test-model" },
     });
+    expect(
+      (body as { all: [{ models: Record<string, unknown> }] }).all[0].models[
+        "test-model"
+      ]
+    ).toMatchObject({ id: "test-model", name: "test-model", providerID: "pi" });
   });
 
   test("exposes empty optional discovery lists", async () => {

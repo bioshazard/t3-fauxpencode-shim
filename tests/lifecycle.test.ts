@@ -33,7 +33,7 @@ async function createSession(
       method: "POST",
     })
   );
-  expect(response.status).toBe(201);
+  expect(response.status).toBe(200);
 }
 
 function promptRequest(id: string, text: string): Request {
@@ -74,7 +74,11 @@ describe("prompt and lifecycle facade", () => {
     expect(frames).toContain('"sessionID":"thread-tools"');
     expect(frames).toContain("tool.started");
     expect(frames).toContain("tool.completed");
-    expect((await completed.json()).messages).toHaveLength(3);
+    expect((await completed.json()).info.role).toBe("assistant");
+    const history = await handler(
+      new Request("http://shim.test/session/thread-tools/message")
+    );
+    expect(await history.json()).toHaveLength(2);
   });
 
   test("accepts asynchronous prompts and reports session status", async () => {
@@ -111,7 +115,7 @@ describe("prompt and lifecycle facade", () => {
     const [promptSnapshot, abortResponse] = await Promise.all([prompt, abort]);
 
     expect(abortResponse.status).toBe(200);
-    expect((await abortResponse.json()).status).toBe("aborted");
+    expect(await abortResponse.json()).toBe(true);
     expect(promptSnapshot.messages).toHaveLength(1);
   });
 
@@ -121,10 +125,10 @@ describe("prompt and lifecycle facade", () => {
     await handler(promptRequest("thread-revert", "first"));
 
     const before = await handler(
-      new Request("http://shim.test/session/thread-revert")
+      new Request("http://shim.test/session/thread-revert/message")
     );
     const beforeBody = await before.json();
-    const target = beforeBody.messages[1].id;
+    const target = beforeBody[1].info.id;
     const reverted = await handler(
       new Request("http://shim.test/session/thread-revert/revert", {
         body: JSON.stringify({ messageID: target }),
@@ -134,7 +138,11 @@ describe("prompt and lifecycle facade", () => {
     );
 
     expect(reverted.status).toBe(200);
-    expect((await reverted.json()).messages).toHaveLength(1);
+    expect(reverted.status).toBe(200);
+    const afterRevert = await handler(
+      new Request("http://shim.test/session/thread-revert/message")
+    );
+    expect(await afterRevert.json()).toHaveLength(1);
     await handler(promptRequest("thread-revert", "second"));
     const continued = await handler(
       new Request("http://shim.test/session/thread-revert/message")

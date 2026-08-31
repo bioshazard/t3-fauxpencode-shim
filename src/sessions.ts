@@ -9,6 +9,7 @@ import {
 import { translateAgentEvent, translateMessages } from "./translation.ts";
 import type {
   FacadeMessage,
+  PromptInput,
   SessionEventSink,
   SessionSnapshot,
   SessionStatus,
@@ -18,12 +19,16 @@ import type {
 export interface CreateSessionInput {
   readonly cwd: string;
   readonly id: string;
+  readonly title?: string;
 }
 
 export interface BackendSession {
   readonly id: string;
   snapshot(): SessionSnapshot;
-  prompt(text: string, emit: SessionEventSink): Promise<SessionSnapshot>;
+  prompt(
+    input: PromptInput | string,
+    emit: SessionEventSink
+  ): Promise<SessionSnapshot>;
   abort(): Promise<void>;
   revert(messageId: string): Promise<SessionSnapshot | null>;
   dispose(): void;
@@ -39,6 +44,12 @@ function now(): number {
   return Date.now();
 }
 
+function normalizePromptInput(input: PromptInput | string): PromptInput {
+  return Object.prototype.toString.call(input) === "[object String]"
+    ? { images: [], text: String(input) }
+    : (input as PromptInput);
+}
+
 class MemoryBackendSession implements BackendSession {
   private readonly created: number;
   private readonly messages: FacadeMessage[] = [];
@@ -50,7 +61,8 @@ class MemoryBackendSession implements BackendSession {
 
   constructor(
     public readonly id: string,
-    private readonly cwd: string
+    private readonly cwd: string,
+    private readonly title: string
   ) {
     this.created = now();
     this.updated = this.created;
@@ -62,12 +74,19 @@ class MemoryBackendSession implements BackendSession {
       id: this.id,
       messages: [...this.messages],
       status: this.status,
+      title: this.title,
       time: { created: this.created, updated: this.updated },
     };
   }
 
-  prompt(text: string, emit: SessionEventSink): Promise<SessionSnapshot> {
-    const operation = this.promptTail.then(() => this.runPrompt(text, emit));
+  prompt(
+    input: PromptInput | string,
+    emit: SessionEventSink
+  ): Promise<SessionSnapshot> {
+    const normalized = normalizePromptInput(input);
+    const operation = this.promptTail.then(() =>
+      this.runPrompt(normalized, emit)
+    );
     this.promptTail = operation.then(
       () => undefined,
       () => undefined
@@ -76,7 +95,7 @@ class MemoryBackendSession implements BackendSession {
   }
 
   private async runPrompt(
-    text: string,
+    input: PromptInput,
     emit: SessionEventSink
   ): Promise<SessionSnapshot> {
     if (this.abortRequested) {
@@ -94,15 +113,15 @@ class MemoryBackendSession implements BackendSession {
 
     const user: FacadeMessage = {
       id: `${this.id}-message-${this.messages.length + 1}`,
-      parts: [{ text, type: "text" }],
+      parts: [{ text: input.text, type: "text" }],
       role: "user",
       time: { created: now() },
     };
     this.messages.push(user);
     emitMessage(this.id, "message.created", user, emit);
 
-    if (text.startsWith("tool:")) {
-      const toolName = text.slice("tool:".length).trim() || "demo_tool";
+    if (input.text.startsWith("tool:")) {
+      const toolName = input.text.slice("tool:".length).trim() || "demo_tool";
       const toolCallId = `${this.id}-tool-${this.messages.length}`;
       const assistant: FacadeMessage = {
         id: `${this.id}-message-${this.messages.length + 1}`,
@@ -155,7 +174,7 @@ class MemoryBackendSession implements BackendSession {
     }
 
     let partial = "";
-    for (const delta of ["Echo: ", text]) {
+    for (const delta of ["Echo: ", input.text]) {
       await Promise.resolve();
       if (this.wasAborted()) return this.snapshot();
       partial += delta;
@@ -252,7 +271,11 @@ export class InMemorySessionBackend implements SessionBackend {
   private readonly sessions = new Map<string, MemoryBackendSession>();
 
   async createSession(input: CreateSessionInput): Promise<BackendSession> {
-    const session = new MemoryBackendSession(input.id, input.cwd);
+    const session = new MemoryBackendSession(
+      input.id,
+      input.cwd,
+      input.title ?? `Pi session ${input.id}`
+    );
     this.sessions.set(input.id, session);
     return session;
   }
@@ -276,7 +299,8 @@ class PiBackendSession implements BackendSession {
   constructor(
     public readonly id: string,
     private readonly session: AgentSession,
-    private readonly cwd: string
+    private readonly cwd: string,
+    private readonly title: string
   ) {
     const header = session.sessionManager.getHeader();
     this.created = header === null ? now() : Date.parse(header.timestamp);
@@ -288,12 +312,19 @@ class PiBackendSession implements BackendSession {
       id: this.id,
       messages: translateMessages(this.id, this.session.messages),
       status: this.session.isStreaming ? "running" : this.status,
+      title: this.title,
       time: { created: this.created, updated: now() },
     };
   }
 
-  prompt(text: string, emit: SessionEventSink): Promise<SessionSnapshot> {
-    const operation = this.promptTail.then(() => this.runPrompt(text, emit));
+  prompt(
+    input: PromptInput | string,
+    emit: SessionEventSink
+  ): Promise<SessionSnapshot> {
+    const normalized = normalizePromptInput(input);
+    const operation = this.promptTail.then(() =>
+      this.runPrompt(normalized, emit)
+    );
     this.promptTail = operation.then(
       () => undefined,
       () => undefined
@@ -302,7 +333,7 @@ class PiBackendSession implements BackendSession {
   }
 
   private async runPrompt(
-    text: string,
+    input: PromptInput,
     emit: SessionEventSink
   ): Promise<SessionSnapshot> {
     if (this.abortRequested) {
@@ -328,7 +359,25 @@ class PiBackendSession implements BackendSession {
       }
     });
     try {
-      await this.session.prompt(text);
+      if (input.model !== undefined) {
+        const model = this.session.modelRuntime.getModel(
+          input.model.providerId,
+          input.model.modelId
+        );
+        if (model !== undefined) await this.session.setModel(model);
+      }
+      const images =
+        input.images.length === 0
+          ? undefined
+          : input.images.map((image) => ({
+              data: image.data,
+              mimeType: image.mimeType,
+              type: "image" as const,
+            }));
+      await this.session.prompt(
+        input.text,
+        images === undefined ? undefined : { images }
+      );
       if (!this.wasAborted()) this.status = "idle";
       emitStatus(this.id, this.status, emit);
       return this.snapshot();
@@ -401,7 +450,12 @@ export class PiSessionBackend implements SessionBackend {
     if (this.config.agentDir !== undefined)
       options.agentDir = this.config.agentDir;
     const result = await createAgentSession(options);
-    return new PiBackendSession(input.id, result.session, input.cwd);
+    return new PiBackendSession(
+      input.id,
+      result.session,
+      input.cwd,
+      input.title ?? `Pi session ${input.id}`
+    );
   }
 
   async createSession(input: CreateSessionInput): Promise<BackendSession> {
@@ -420,6 +474,7 @@ export class PiSessionBackend implements SessionBackend {
       id: session.id,
       messages: [],
       status: "idle",
+      title: `Pi session ${session.id}`,
       time: {
         created: session.created.getTime(),
         updated: session.modified.getTime(),
@@ -436,7 +491,10 @@ export class PiSessionBackend implements SessionBackend {
       this.config.sessionDir,
       info.cwd
     );
-    return this.createPiSession({ cwd: info.cwd, id: info.id }, manager);
+    return this.createPiSession(
+      { cwd: info.cwd, id: info.id, title: `Pi session ${info.id}` },
+      manager
+    );
   }
 }
 
@@ -452,7 +510,11 @@ export class SessionRegistry {
     if (this.active.has(id) || (await this.backend.openSession(id)) !== null) {
       throw new Error(`Session ${id} already exists`);
     }
-    const session = await this.backend.createSession({ cwd: input.cwd, id });
+    const session = await this.backend.createSession({
+      cwd: input.cwd,
+      id,
+      ...(input.title === undefined ? {} : { title: input.title }),
+    });
     this.active.set(id, session);
     return session.snapshot();
   }
@@ -472,11 +534,11 @@ export class SessionRegistry {
 
   async promptSession(
     id: string,
-    text: string,
+    input: PromptInput | string,
     emit: SessionEventSink
   ): Promise<SessionSnapshot | null> {
     const session = await this.getSession(id);
-    return session === null ? null : session.prompt(text, emit);
+    return session === null ? null : session.prompt(input, emit);
   }
 
   async abortSession(id: string): Promise<SessionSnapshot | null> {

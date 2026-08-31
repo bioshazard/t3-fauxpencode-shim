@@ -2,6 +2,11 @@ import { loadConfig } from "./config.ts";
 import { contractError } from "./contract.ts";
 import { EventHub } from "./events.ts";
 import {
+  messagesResponse,
+  providerResponse,
+  sessionResponse,
+} from "./opencode.ts";
+import {
   readCreateSessionRequest,
   readPromptRequest,
   readRevertRequest,
@@ -48,6 +53,14 @@ function methodNotAllowed(request: Request): Response {
   );
 }
 
+function isAssistantMessageEntry(entry: { readonly info: JsonValue }): boolean {
+  if (Object.prototype.toString.call(entry.info) !== "[object Object]") {
+    return false;
+  }
+  const info = entry.info as { readonly role?: JsonValue };
+  return info.role === "assistant";
+}
+
 export function createHandler(
   config: ShimConfig,
   sessions = new SessionRegistry(new InMemorySessionBackend()),
@@ -82,12 +95,7 @@ function createSessionHandler(
 
     if (url.pathname === "/provider") {
       if (request.method !== "GET") return methodNotAllowed(request);
-      const provider = {
-        id: config.providerId,
-        models: [{ id: config.modelId, name: config.modelId }],
-        name: "Pi",
-      };
-      return jsonResponse({ default: provider.id, providers: [provider] });
+      return jsonResponse(providerResponse(config));
     }
 
     if (url.pathname === "/agent" || url.pathname === "/skill") {
@@ -111,8 +119,10 @@ function createSessionHandler(
           }
           try {
             return jsonResponse(
-              await sessions.createSession(parsed.input),
-              201
+              sessionResponse(
+                await sessions.createSession(parsed.input),
+                config
+              )
             );
           } catch (error) {
             const message =
@@ -126,7 +136,11 @@ function createSessionHandler(
     }
 
     if (url.pathname === "/session" && request.method === "GET") {
-      return sessions.listSessions().then((items) => jsonResponse(items));
+      return sessions
+        .listSessions()
+        .then((items) =>
+          jsonResponse(items.map((item) => sessionResponse(item, config)))
+        );
     }
 
     if (url.pathname === "/session/status") {
@@ -171,10 +185,15 @@ function createSessionHandler(
           try {
             const snapshot = await sessions.promptSession(
               sessionId,
-              parsed.text,
+              parsed.input,
               (event) => events.publish(event)
             );
-            return snapshot === null ? notFound() : jsonResponse(snapshot);
+            if (snapshot === null) return notFound();
+            const entries = messagesResponse(snapshot, config);
+            const assistant = [...entries]
+              .reverse()
+              .find(isAssistantMessageEntry);
+            return jsonResponse(assistant ?? sessionResponse(snapshot, config));
           } catch (error) {
             const message =
               error instanceof Error ? error.message : "Pi prompt failed.";
@@ -193,7 +212,7 @@ function createSessionHandler(
           const session = await sessions.getSession(sessionId);
           if (session === null) return notFound();
           void sessions
-            .promptSession(sessionId, parsed.text, (event) =>
+            .promptSession(sessionId, parsed.input, (event) =>
               events.publish(event)
             )
             .catch((error: unknown) => {
@@ -220,7 +239,7 @@ function createSessionHandler(
         return sessions
           .abortSession(sessionId)
           .then((snapshot) =>
-            snapshot === null ? notFound() : jsonResponse(snapshot)
+            snapshot === null ? notFound() : jsonResponse(true)
           );
       }
       if (request.method === "POST" && operation === "/revert") {
@@ -236,7 +255,9 @@ function createSessionHandler(
               sessionId,
               parsed.messageId
             );
-            return snapshot === null ? notFound() : jsonResponse(snapshot);
+            return snapshot === null
+              ? notFound()
+              : jsonResponse(sessionResponse(snapshot, config));
           } catch (error) {
             const message =
               error instanceof Error ? error.message : "Session revert failed.";
@@ -248,7 +269,9 @@ function createSessionHandler(
       return sessions.getSnapshot(sessionId).then((snapshot) => {
         if (snapshot === null) return notFound();
         return jsonResponse(
-          operation === "/message" ? snapshot.messages : snapshot
+          operation === "/message"
+            ? messagesResponse(snapshot, config)
+            : sessionResponse(snapshot, config)
         );
       });
     }
