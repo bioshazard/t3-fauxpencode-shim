@@ -45,6 +45,16 @@ describe("health and discovery", () => {
     });
   });
 
+  test("exposes empty optional discovery lists", async () => {
+    const agents = await request("/agent");
+    const skills = await request("/skill");
+
+    expect(agents.status).toBe(200);
+    expect(skills.status).toBe(200);
+    expect(await agents.json()).toEqual([]);
+    expect(await skills.json()).toEqual([]);
+  });
+
   test("fails explicitly for unknown routes and malformed work", async () => {
     const unknown = await request("/not-in-contract");
     const session = await createHandler(config)(

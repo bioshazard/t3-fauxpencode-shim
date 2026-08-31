@@ -77,6 +77,24 @@ describe("prompt and lifecycle facade", () => {
     expect((await completed.json()).messages).toHaveLength(3);
   });
 
+  test("accepts asynchronous prompts and reports session status", async () => {
+    const { handler } = createTestHandler();
+    await createSession(handler, "thread-async");
+    const status = await handler(
+      new Request("http://shim.test/session/status")
+    );
+    expect(await status.json()).toEqual({ "thread-async": { type: "idle" } });
+
+    const prompt = await handler(
+      new Request("http://shim.test/session/thread-async/prompt_async", {
+        body: JSON.stringify({ text: "async" }),
+        headers: { "content-type": "application/json" },
+        method: "POST",
+      })
+    );
+    expect(prompt.status).toBe(204);
+  });
+
   test("aborts an active turn without adding an assistant message", async () => {
     const { handler, registry } = createTestHandler();
     await createSession(handler, "thread-abort");

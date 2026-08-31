@@ -90,6 +90,11 @@ function createSessionHandler(
       return jsonResponse({ default: provider.id, providers: [provider] });
     }
 
+    if (url.pathname === "/agent" || url.pathname === "/skill") {
+      if (request.method !== "GET") return methodNotAllowed(request);
+      return jsonResponse([]);
+    }
+
     if (url.pathname === "/global/event" || url.pathname === "/event") {
       if (request.method !== "GET") return methodNotAllowed(request);
       return events.response();
@@ -124,10 +129,26 @@ function createSessionHandler(
       return sessions.listSessions().then((items) => jsonResponse(items));
     }
 
+    if (url.pathname === "/session/status") {
+      if (request.method !== "GET") return methodNotAllowed(request);
+      return sessions
+        .listSessions()
+        .then((items) =>
+          jsonResponse(
+            Object.fromEntries(
+              items.map((item) => [
+                item.id,
+                { type: item.status === "running" ? "busy" : "idle" },
+              ])
+            )
+          )
+        );
+    }
+
     if (url.pathname === "/session") return methodNotAllowed(request);
 
     const sessionPath =
-      /^\/session\/([^/]+)(\/message|\/prompt|\/abort|\/revert|\/event)?$/u.exec(
+      /^\/session\/([^/]+)(\/message|\/prompt|\/prompt_async|\/abort|\/revert|\/event)?$/u.exec(
         url.pathname
       );
     if (sessionPath !== null) {
@@ -159,6 +180,40 @@ function createSessionHandler(
               error instanceof Error ? error.message : "Pi prompt failed.";
             return jsonResponse(contractError("session_failed", message), 500);
           }
+        });
+      }
+      if (request.method === "POST" && operation === "/prompt_async") {
+        return readPromptRequest(request).then(async (parsed) => {
+          if (parsed.kind === "error") {
+            return jsonResponse(
+              contractError("invalid_request", parsed.message),
+              400
+            );
+          }
+          const session = await sessions.getSession(sessionId);
+          if (session === null) return notFound();
+          void sessions
+            .promptSession(sessionId, parsed.text, (event) =>
+              events.publish(event)
+            )
+            .catch((error: unknown) => {
+              events.publish({
+                id: crypto.randomUUID(),
+                properties: {
+                  error:
+                    error instanceof Error
+                      ? error.message
+                      : "Pi prompt failed.",
+                  sessionStatus: "error",
+                },
+                sessionID: sessionId,
+                type: "session.error",
+              });
+            });
+          return new Response(null, {
+            headers: { "cache-control": "no-store" },
+            status: 204,
+          });
         });
       }
       if (request.method === "POST" && operation === "/abort") {
