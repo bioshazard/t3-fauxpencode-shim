@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  assertPinnedT3Checkout,
   assertAcceptanceReport,
   assertEquivalentScenarioReports,
 } from "../tools/contract/acceptance.ts";
@@ -73,8 +74,82 @@ describe("shim acceptance gate", () => {
   test("fails closed when a matrix normalization rule is present", () => {
     expect(() =>
       assertEquivalentScenarioReports(report(), report(), [
-        { id: "OC-T3-0001", normalization: ["timestamp"] },
+        {
+          errorBehavior: "none",
+          events: [],
+          id: "OC-T3-0001",
+          normalization: ["timestamp"],
+          request: { method: "GET", path: "/" },
+          response: { status: 200 },
+          stateEffect: {},
+          scenario: "C01",
+          support: "required",
+        },
       ])
     ).toThrow("normalization is not implemented");
+  });
+
+  test("rejects matrix behavior that differs from the selected operation", () => {
+    expect(() =>
+      assertEquivalentScenarioReports(report(), report(), [
+        {
+          errorBehavior: "none",
+          events: [],
+          id: "OC-T3-0001",
+          normalization: [],
+          request: { method: "GET", path: "/" },
+          response: { status: 201 },
+          stateEffect: {},
+          scenario: "C01",
+          support: "required",
+        },
+      ])
+    ).toThrow("response status mismatches");
+  });
+
+  test("matches templated matrix paths to concrete scenario operations", () => {
+    const reference = report();
+    const shim = report();
+    reference.scenarios[0].operations[0].path = "/session/reference-id";
+    shim.scenarios[0].operations[0].path = "/session/shim-id";
+    expect(() =>
+      assertEquivalentScenarioReports(reference, shim, [
+        {
+          errorBehavior: "none",
+          events: [],
+          id: "OC-T3-0001",
+          normalization: [],
+          request: { method: "GET", path: "/session/{sessionID}" },
+          response: { status: 200 },
+          stateEffect: {},
+          scenario: "C01",
+          support: "required",
+        },
+      ])
+    ).toThrow("operation 1 differs for C01");
+  });
+
+  test("fails closed for matrix fields absent from scenario reports", () => {
+    expect(() =>
+      assertEquivalentScenarioReports(report(), report(), [
+        {
+          errorBehavior: "none",
+          events: [],
+          id: "OC-T3-0001",
+          normalization: [],
+          request: { body: {}, method: "GET", path: "/" },
+          response: { status: 200 },
+          stateEffect: {},
+          scenario: "C01",
+          support: "required",
+        },
+      ])
+    ).toThrow("fields not present");
+  });
+
+  test("rejects a T3 checkout at the wrong pinned commit", async () => {
+    await expect(
+      assertPinnedT3Checkout(process.cwd(), "0".repeat(40))
+    ).rejects.toThrow("expected pinned");
   });
 });

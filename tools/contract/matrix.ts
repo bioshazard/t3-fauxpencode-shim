@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 
 import type { JsonValue } from "../../src/types.ts";
 import { loadCapture } from "./capture.ts";
+import { loadInventory } from "./inventory.ts";
 import {
   decodeScenarioReport,
   validateCompletedScenarioReport,
@@ -34,6 +35,49 @@ function isNumber(value: JsonValue | undefined): value is number {
 
 function nonEmptyRecord(value: JsonValue): boolean {
   return isRecord(value) && Object.keys(value).length > 0;
+}
+
+function sameJson(left: JsonValue, right: JsonValue): boolean {
+  if (left === right) return true;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return (
+      Array.isArray(left) &&
+      Array.isArray(right) &&
+      left.length === right.length &&
+      left.every((item, index) => sameJson(item, right[index]))
+    );
+  }
+  if (isRecord(left) || isRecord(right)) {
+    if (!isRecord(left) || !isRecord(right)) return false;
+    const keys = Object.keys(left);
+    return (
+      keys.length === Object.keys(right).length &&
+      keys.every(
+        (key) => Object.hasOwn(right, key) && sameJson(left[key], right[key])
+      )
+    );
+  }
+  return false;
+}
+
+function parsedBody(value: string | null): JsonValue | string | null {
+  if (value === null) return null;
+  try {
+    return JSON.parse(value) as JsonValue;
+  } catch {
+    return value;
+  }
+}
+
+function headerValue(
+  headers: Readonly<Record<string, string>>,
+  key: string
+): string | undefined {
+  const wanted = key.toLowerCase();
+  const actual = Object.keys(headers).find(
+    (candidate) => candidate.toLowerCase() === wanted
+  );
+  return actual === undefined ? undefined : headers[actual];
 }
 
 function containsTbd(value: JsonValue): boolean {
@@ -187,6 +231,154 @@ function validateRowExpectedBehavior(
     );
 }
 
+function sourceReferenceMatches(
+  reference: string,
+  entryId: string,
+  source: {
+    readonly path: string;
+    readonly line: number;
+    readonly symbol: string;
+  }
+): boolean {
+  return [
+    source.symbol,
+    source.path,
+    `${source.path}:${source.line}`,
+    `${entryId}#${source.symbol}`,
+    `${entryId}#${source.path}:${source.line}`,
+  ].includes(reference);
+}
+
+export function pathMatches(pattern: string, actual: string): boolean {
+  const expected = pattern.split("/");
+  const received = actual.split("/");
+  return (
+    expected.length === received.length &&
+    expected.every((segment, index) =>
+      /^\{[^{}]+\}$/u.test(segment)
+        ? received[index].length > 0
+        : segment === received[index]
+    )
+  );
+}
+
+function compareWireFields(
+  row: { readonly [key: string]: JsonValue },
+  record: Awaited<ReturnType<typeof loadCapture>>[number],
+  rowId: string,
+  sequence: number
+): void {
+  const request = row.request;
+  const response = row.response;
+  if (!isRecord(request) || !isRecord(response)) return;
+  const requestFields = Object.keys(request);
+  const responseFields = Object.keys(response);
+  const allowedRequest = new Set([
+    "method",
+    "path",
+    "query",
+    "headers",
+    "body",
+  ]);
+  const allowedResponse = new Set(["status", "headers", "body"]);
+  if (requestFields.some((key) => !allowedRequest.has(key)))
+    throw new Error(
+      `Frozen matrix row ${rowId} has unsupported normalized request fields.`
+    );
+  if (responseFields.some((key) => !allowedResponse.has(key)))
+    throw new Error(
+      `Frozen matrix row ${rowId} has unsupported normalized response fields.`
+    );
+
+  if (
+    Object.hasOwn(request, "method") &&
+    (!isString(request.method) ||
+      request.method.toUpperCase() !== record.request.method.toUpperCase())
+  )
+    throw new Error(
+      `Frozen matrix row ${rowId} request method does not match raw evidence sequence ${sequence}.`
+    );
+  if (
+    Object.hasOwn(request, "path") &&
+    (!isString(request.path) || !pathMatches(request.path, record.request.path))
+  )
+    throw new Error(
+      `Frozen matrix row ${rowId} request path does not match raw evidence sequence ${sequence}.`
+    );
+  if (
+    Object.hasOwn(request, "query") &&
+    (!isRecord(request.query) || !sameJson(request.query, record.request.query))
+  )
+    throw new Error(
+      `Frozen matrix row ${rowId} request query does not match raw evidence sequence ${sequence}.`
+    );
+  if (Object.hasOwn(request, "headers")) {
+    if (!isRecord(request.headers))
+      throw new Error(
+        `Frozen matrix row ${rowId} request headers are not comparable.`
+      );
+    for (const [key, value] of Object.entries(request.headers)) {
+      if (
+        !isString(value) ||
+        headerValue(record.request.headers, key) !== value
+      )
+        throw new Error(
+          `Frozen matrix row ${rowId} request headers do not match raw evidence sequence ${sequence}.`
+        );
+    }
+  }
+  if (
+    Object.hasOwn(request, "body") &&
+    !sameJsonOrRaw(request.body, parsedBody(record.body.request))
+  )
+    throw new Error(
+      `Frozen matrix row ${rowId} request body does not match raw evidence sequence ${sequence}.`
+    );
+  if (Object.hasOwn(response, "status")) {
+    const status = response.status;
+    if (
+      (status === null && record.response !== undefined) ||
+      (isNumber(status) && record.response?.status !== status) ||
+      (status !== null && !isNumber(status))
+    )
+      throw new Error(
+        `Frozen matrix row ${rowId} response status does not match raw evidence sequence ${sequence}.`
+      );
+  }
+  if (Object.hasOwn(response, "headers")) {
+    if (!isRecord(response.headers) || record.response === undefined)
+      throw new Error(
+        `Frozen matrix row ${rowId} response headers are not comparable.`
+      );
+    for (const [key, value] of Object.entries(response.headers)) {
+      if (
+        !isString(value) ||
+        headerValue(record.response.headers, key) !== value
+      )
+        throw new Error(
+          `Frozen matrix row ${rowId} response headers do not match raw evidence sequence ${sequence}.`
+        );
+    }
+  }
+  if (
+    Object.hasOwn(response, "body") &&
+    (record.response === undefined ||
+      !sameJsonOrRaw(response.body, parsedBody(record.body.response)))
+  )
+    throw new Error(
+      `Frozen matrix row ${rowId} response body does not match raw evidence sequence ${sequence}.`
+    );
+}
+
+function sameJsonOrRaw(
+  left: JsonValue,
+  right: JsonValue | string | null
+): boolean {
+  if (left === null && right === null) return true;
+  if (isString(left) && isString(right)) return left === right;
+  return right !== null && !isString(right) && sameJson(left, right);
+}
+
 export async function validateMatrixEvidence(
   matrix: Matrix,
   manifest: ReferenceManifest
@@ -207,6 +399,15 @@ export async function validateMatrixEvidence(
     report.scenarios.map((scenario) => [scenario.id, scenario])
   );
   const captures = new Map(records.map((record) => [record.sequence, record]));
+  const inventory = await loadInventory();
+  if (
+    inventory.corpusId !== manifest.corpusId ||
+    inventory.generatedFrom.t3CodeCommit !== manifest.t3Commit ||
+    inventory.generatedFrom.openCodeCommit !== manifest.openCodeCommit
+  )
+    throw new Error(
+      "Verified reference corpus does not match the pinned inventory."
+    );
 
   for (const rowValue of matrix.rows) {
     if (!isRecord(rowValue)) continue;
@@ -226,12 +427,37 @@ export async function validateMatrixEvidence(
     if (rowValue.support !== "required") continue;
 
     validateRowExpectedBehavior(rowValue, rowId);
+    if (
+      Array.isArray(rowValue.normalization) &&
+      rowValue.normalization.length > 0
+    )
+      throw new Error(
+        `Frozen matrix row ${rowId} cannot bind raw evidence: normalization is not implemented.`
+      );
+    const operation = isString(rowValue.operation) ? rowValue.operation : "";
+    const inventoryEntry = inventory.entries.find(
+      (entry) => entry.operation === operation
+    );
+    if (inventoryEntry === undefined)
+      throw new Error(
+        `Frozen matrix row ${rowId} operation is not in the pinned inventory.`
+      );
     const evidence = rowValue.evidence as readonly JsonValue[];
     let rawEvidence = 0;
     let t3Evidence = 0;
     for (const value of evidence) {
       const parsed = readEvidenceReference(value, rowId);
       if (parsed.kind === "t3") {
+        const reference = parsed.reference as string;
+        const matchesT3Source = inventoryEntry.sources.some(
+          (source) =>
+            source.repository.includes("/t3code") &&
+            sourceReferenceMatches(reference, inventoryEntry.id, source)
+        );
+        if (!matchesT3Source)
+          throw new Error(
+            `Frozen matrix row ${rowId} T3 evidence does not resolve to a pinned inventory source.`
+          );
         t3Evidence += 1;
         continue;
       }
@@ -247,27 +473,18 @@ export async function validateMatrixEvidence(
         throw new Error(
           `Frozen matrix row ${rowId} raw evidence does not reference ${scenario.id} in the verified capture.`
         );
-      const request = rowValue.request;
+      if (!pathMatches(inventoryEntry.path ?? "", record.request.path))
+        throw new Error(
+          `Frozen matrix row ${rowId} raw evidence does not match inventory operation ${inventoryEntry.operation}.`
+        );
       if (
-        isRecord(request) &&
-        isString(request.method) &&
-        isString(request.path) &&
-        (request.method.toUpperCase() !== record.request.method.toUpperCase() ||
-          request.path !== record.request.path)
+        inventoryEntry.method.toUpperCase() !==
+        record.request.method.toUpperCase()
       )
         throw new Error(
-          `Frozen matrix row ${rowId} normalized request does not match raw evidence sequence ${reference.sequence}.`
+          `Frozen matrix row ${rowId} raw evidence method does not match inventory operation ${inventoryEntry.operation}.`
         );
-      const response = rowValue.response;
-      if (
-        isRecord(response) &&
-        isNumber(response.status) &&
-        (record.response === undefined ||
-          response.status !== record.response.status)
-      )
-        throw new Error(
-          `Frozen matrix row ${rowId} normalized response does not match raw evidence sequence ${reference.sequence}.`
-        );
+      compareWireFields(rowValue, record, rowId, reference.sequence);
     }
     if (rawEvidence === 0)
       throw new Error(`Frozen matrix row ${rowId} needs raw capture evidence.`);

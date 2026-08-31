@@ -58,9 +58,9 @@ function captureRecord(
 ): Record<string, unknown> {
   return {
     body: {
-      request: null,
+      request: JSON.stringify({ title: "hello" }),
       requestTruncated: false,
-      response: "{}",
+      response: JSON.stringify({ ok: true }),
       responseTruncated: false,
     },
     connection: {
@@ -73,8 +73,14 @@ function captureRecord(
       "x-contract-scenario": scenario,
     },
     durationMs: 1,
-    request: { headers: {}, method: "GET", path: "/", query: {} },
-    response: { headers: {}, status: 200 },
+    request: {
+      headers: { accept: "application/json" },
+      method: "GET",
+      path: "/global/health",
+      query: {},
+      body: { title: "hello" },
+    },
+    response: { headers: { "content-type": "application/json" }, status: 200 },
     sequence,
     startedAt: "2026-08-31T12:00:00.000Z",
   };
@@ -89,7 +95,9 @@ function scenarioEntry(id: string): Record<string, unknown> {
     failures: [],
     id,
     observedEventTypes: [],
-    operations: [{ body: "{}", method: "GET", path: "/", status: 200 }],
+    operations: [
+      { body: "{}", method: "GET", path: "/global/health", status: 200 },
+    ],
     passed: true,
   };
 }
@@ -141,9 +149,19 @@ function frozenRow(evidence: JsonValue[]): Matrix {
         events: [],
         id: "OC-T3-0001",
         normalization: [],
-        operation: "health",
-        request: { method: "GET", path: "/" },
-        response: { status: 200 },
+        operation: "global.health",
+        request: {
+          headers: { accept: "application/json" },
+          method: "GET",
+          path: "/global/health",
+          query: {},
+          body: { title: "hello" },
+        },
+        response: {
+          body: { ok: true },
+          headers: { "content-type": "application/json" },
+          status: 200,
+        },
         stateEffect: {},
         scenario: "C01",
         support: "required",
@@ -206,7 +224,7 @@ describe("contract matrix", () => {
     const { manifest } = await verifiedFixture();
     await expect(
       validateMatrixEvidence(
-        frozenRow(["raw:C01#1", "t3:OpenCodeAdapter"]),
+        frozenRow(["raw:C01#1", "t3:OC-HTTP-0001#verifyOpenCodeServerVersion"]),
         manifest
       )
     ).resolves.toBeUndefined();
@@ -223,7 +241,7 @@ describe("contract matrix", () => {
     const { manifest } = await verifiedFixture();
     await expect(
       validateMatrixEvidence(
-        frozenRow(["raw:C02#2", "t3:OpenCodeAdapter"]),
+        frozenRow(["raw:C02#2", "t3:OC-HTTP-0001#verifyOpenCodeServerVersion"]),
         manifest
       )
     ).rejects.toThrow("does not reference C01");
@@ -231,7 +249,10 @@ describe("contract matrix", () => {
 
   test("rejects frozen rows without normalized expected behavior", async () => {
     const { manifest } = await verifiedFixture();
-    const row = frozenRow(["raw:C01#1", "t3:OpenCodeAdapter"]);
+    const row = frozenRow([
+      "raw:C01#1",
+      "t3:OC-HTTP-0001#verifyOpenCodeServerVersion",
+    ]);
     (row.rows[0] as Record<string, JsonValue>).response = {};
     await expect(validateMatrixEvidence(row, manifest)).rejects.toThrow(
       "normalized request and response behavior"
@@ -240,10 +261,64 @@ describe("contract matrix", () => {
 
   test("rejects normalized response status that differs from capture", async () => {
     const { manifest } = await verifiedFixture();
-    const row = frozenRow(["raw:C01#1", "t3:OpenCodeAdapter"]);
+    const row = frozenRow([
+      "raw:C01#1",
+      "t3:OC-HTTP-0001#verifyOpenCodeServerVersion",
+    ]);
     (row.rows[0] as Record<string, JsonValue>).response = { status: 201 };
     await expect(validateMatrixEvidence(row, manifest)).rejects.toThrow(
-      "normalized response does not match"
+      "response status does not match"
+    );
+  });
+
+  test("rejects T3 evidence that is not an inventory source", async () => {
+    const { manifest } = await verifiedFixture();
+    await expect(
+      validateMatrixEvidence(
+        frozenRow(["raw:C01#1", "t3:invented-consumer"]),
+        manifest
+      )
+    ).rejects.toThrow("does not resolve to a pinned inventory source");
+  });
+
+  test("binds every represented wire field to raw evidence", async () => {
+    const { manifest } = await verifiedFixture();
+    const row = frozenRow([
+      "raw:C01#1",
+      "t3:OC-HTTP-0001#verifyOpenCodeServerVersion",
+    ]);
+    const value = row.rows[0] as Record<string, JsonValue>;
+    value.request = {
+      headers: { accept: "text/plain" },
+      method: "GET",
+      path: "/global/health",
+      query: {},
+    };
+    await expect(validateMatrixEvidence(row, manifest)).rejects.toThrow(
+      "request headers do not match"
+    );
+  });
+
+  test("rejects operation identity that disagrees with the inventory", async () => {
+    const { manifest } = await verifiedFixture();
+    const row = frozenRow(["raw:C01#1", "t3:OC-HTTP-0002#loadProviders"]);
+    (row.rows[0] as Record<string, JsonValue>).operation = "provider.list";
+    await expect(validateMatrixEvidence(row, manifest)).rejects.toThrow(
+      "does not match inventory operation"
+    );
+  });
+
+  test("rejects represented request bodies that differ from capture", async () => {
+    const { manifest } = await verifiedFixture();
+    const row = frozenRow([
+      "raw:C01#1",
+      "t3:OC-HTTP-0001#verifyOpenCodeServerVersion",
+    ]);
+    const request = (row.rows[0] as Record<string, JsonValue>)
+      .request as Record<string, JsonValue>;
+    request.body = { title: "different" };
+    await expect(validateMatrixEvidence(row, manifest)).rejects.toThrow(
+      "request body does not match"
     );
   });
 });

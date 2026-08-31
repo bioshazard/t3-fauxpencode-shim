@@ -1,7 +1,7 @@
 import { mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
-import { loadMatrix, validateMatrix } from "./matrix.ts";
+import { loadMatrix, pathMatches, validateMatrix } from "./matrix.ts";
 import {
   decodeScenarioReport,
   isRecordValue,
@@ -47,6 +47,8 @@ export interface AcceptanceOptions {
   readonly harness?: AcceptanceHarness;
 }
 
+type MatrixRecord = { readonly [key: string]: unknown };
+
 function readArgv(name: string): readonly string[] {
   const raw = Bun.env[name];
   if (raw === undefined || raw.trim().length === 0)
@@ -75,9 +77,9 @@ async function runConfiguredHarness(
       "SHIM_ACCEPTANCE_T3_KIND must be stock-t3-opencode-adapter."
     );
   const argv = readArgv("SHIM_ACCEPTANCE_T3_ARGV");
-  const cwd = Bun.env.SHIM_ACCEPTANCE_T3_CWD ?? Bun.env.T3_REFERENCE_ROOT;
+  const cwd = Bun.env.SHIM_ACCEPTANCE_T3_CWD;
   if (cwd === undefined || cwd.trim().length === 0)
-    throw new Error("SHIM_ACCEPTANCE_T3_CWD or T3_REFERENCE_ROOT is required.");
+    throw new Error("SHIM_ACCEPTANCE_T3_CWD is required.");
   const env = {
     ...process.env,
     CAPTURE_TARGET: config.target,
@@ -111,6 +113,28 @@ async function runConfiguredHarness(
     );
 }
 
+export async function assertPinnedT3Checkout(
+  cwd: string,
+  expectedCommit: string
+): Promise<void> {
+  const process = Bun.spawn({
+    cmd: ["git", "-C", cwd, "rev-parse", "HEAD"],
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const output = await new Response(process.stdout).text();
+  const exitCode = await process.exited;
+  if (exitCode !== 0)
+    throw new Error(
+      "Shim acceptance T3 checkout is not a readable git worktree."
+    );
+  const actual = output.trim();
+  if (actual !== expectedCommit)
+    throw new Error(
+      `Shim acceptance T3 checkout is ${actual}, expected pinned ${expectedCommit}.`
+    );
+}
+
 function canonicalJson(value: unknown): string {
   if (Array.isArray(value))
     return `[${value.map((item) => canonicalJson(item)).join(",")}]`;
@@ -124,6 +148,203 @@ function canonicalJson(value: unknown): string {
 
 function sameJson(left: unknown, right: unknown): boolean {
   return canonicalJson(left) === canonicalJson(right);
+}
+
+function isSafeNumber(value: unknown): value is number {
+  return (
+    Object.prototype.toString.call(value) === "[object Number]" &&
+    Number.isSafeInteger(value)
+  );
+}
+
+function rowRecord(value: unknown, rowId: string): MatrixRecord {
+  if (!isRecordValue(value))
+    throw new Error(`Shim acceptance matrix row ${rowId} is not an object.`);
+  return value;
+}
+
+function assertRowRequest(
+  row: MatrixRecord,
+  rowId: string,
+  operation: ComparableScenario["operations"][number]
+): void {
+  const request = row.request;
+  if (!isRecordValue(request))
+    throw new Error(
+      `Shim acceptance matrix row ${rowId} request comparison is unsupported.`
+    );
+  const keys = Object.keys(request);
+  if (keys.some((key) => key !== "method" && key !== "path"))
+    throw new Error(
+      `Shim acceptance matrix row ${rowId} requests fields not present in scenario reports.`
+    );
+  const method = request.method;
+  const path = request.path;
+  if (!isStringValue(method) || !isStringValue(path))
+    throw new Error(
+      `Shim acceptance matrix row ${rowId} needs comparable request method/path.`
+    );
+  if (
+    operation.method.toUpperCase() !== method.toUpperCase() ||
+    !pathMatches(path, operation.path)
+  )
+    throw new Error(
+      `Shim acceptance matrix row ${rowId} request does not match its scenario operation.`
+    );
+}
+
+function assertRowResponse(
+  row: MatrixRecord,
+  rowId: string,
+  operation: ComparableScenario["operations"][number]
+): void {
+  const response = row.response;
+  if (!isRecordValue(response))
+    throw new Error(
+      `Shim acceptance matrix row ${rowId} response comparison is unsupported.`
+    );
+  const keys = Object.keys(response);
+  if (keys.some((key) => key !== "status" && key !== "body"))
+    throw new Error(
+      `Shim acceptance matrix row ${rowId} response fields are not present in scenario reports.`
+    );
+  if (!isSafeNumber(response.status))
+    throw new Error(
+      `Shim acceptance matrix row ${rowId} needs comparable response status.`
+    );
+  if (operation.status !== response.status)
+    throw new Error(
+      `Shim acceptance matrix row ${rowId} response status mismatches ${operation.status}.`
+    );
+  if (!Object.hasOwn(response, "body")) return;
+  const expectedBody = response.body;
+  if (expectedBody === null || isStringValue(expectedBody)) {
+    if (operation.body !== expectedBody)
+      throw new Error(
+        `Shim acceptance matrix row ${rowId} response body mismatches its scenario operation.`
+      );
+    return;
+  }
+  if (operation.body === null)
+    throw new Error(
+      `Shim acceptance matrix row ${rowId} response body mismatches its scenario operation.`
+    );
+  const actualBody = (() => {
+    try {
+      return JSON.parse(operation.body) as unknown;
+    } catch {
+      return undefined;
+    }
+  })();
+  if (actualBody === undefined || !sameJson(expectedBody, actualBody))
+    throw new Error(
+      `Shim acceptance matrix row ${rowId} response body mismatches its scenario operation.`
+    );
+}
+
+function assertRowEvents(
+  row: MatrixRecord,
+  rowId: string,
+  scenario: ComparableScenario
+): void {
+  const events = row.events;
+  if (!Array.isArray(events))
+    throw new Error(
+      `Shim acceptance matrix row ${rowId} events are unsupported.`
+    );
+  if (events.length === 0) return;
+  if (scenario.observedEventTypes.length === 0)
+    throw new Error(
+      `Shim acceptance matrix row ${rowId} event observations differ.`
+    );
+  throw new Error(
+    `Shim acceptance matrix row ${rowId} requires operation-scoped event fields absent from scenario reports.`
+  );
+}
+
+function assertRowSupported(row: MatrixRecord, rowId: string): void {
+  const normalization = row.normalization;
+  if (Array.isArray(normalization) && normalization.length > 0)
+    throw new Error(
+      `Shim acceptance cannot compare matrix row ${rowId}: normalization is not implemented.`
+    );
+  if (row.errorBehavior !== "none")
+    throw new Error(
+      `Shim acceptance matrix row ${rowId} error behavior is not represented in scenario reports.`
+    );
+  if (
+    !isRecordValue(row.stateEffect) ||
+    Object.keys(row.stateEffect).length > 0
+  )
+    throw new Error(
+      `Shim acceptance matrix row ${rowId} state effect is not represented in scenario reports.`
+    );
+}
+
+function assertMatrixRows(
+  rows: readonly unknown[],
+  reference: ComparableReport,
+  shim: ComparableReport
+): void {
+  const referenceById = new Map(
+    reference.scenarios.map((scenario) => [scenario.id, scenario])
+  );
+  const shimById = new Map(
+    shim.scenarios.map((scenario) => [scenario.id, scenario])
+  );
+  for (const value of rows) {
+    const row = rowRecord(value, "unknown");
+    const rowId = isStringValue(row.id) ? row.id : "unknown";
+    if (row.support !== "required") continue;
+    assertRowSupported(row, rowId);
+    const scenarioId = row.scenario;
+    if (!isStringValue(scenarioId))
+      throw new Error(`Shim acceptance matrix row ${rowId} has no scenario.`);
+    const expected = referenceById.get(scenarioId);
+    const actual = shimById.get(scenarioId);
+    if (expected === undefined || actual === undefined)
+      throw new Error(
+        `Shim acceptance matrix row ${rowId} references missing scenario ${scenarioId}.`
+      );
+    if (
+      expected.applicability !== "required" ||
+      actual.applicability !== "required"
+    )
+      throw new Error(
+        `Shim acceptance matrix row ${rowId} requires non-applicable scenario ${scenarioId}.`
+      );
+    const request = row.request;
+    if (
+      !isRecordValue(request) ||
+      !isStringValue(request.method) ||
+      !isStringValue(request.path)
+    )
+      throw new Error(
+        `Shim acceptance matrix row ${rowId} needs comparable request method/path.`
+      );
+    const requestMethod = request.method;
+    const requestPath = request.path;
+    const findOperation = (scenario: ComparableScenario) => {
+      const matches = scenario.operations.filter(
+        (operation) =>
+          operation.method.toUpperCase() === requestMethod.toUpperCase() &&
+          pathMatches(requestPath, operation.path)
+      );
+      if (matches.length !== 1)
+        throw new Error(
+          `Shim acceptance matrix row ${rowId} does not select exactly one operation in ${scenario.id}.`
+        );
+      return matches[0];
+    };
+    const expectedOperation = findOperation(expected);
+    const actualOperation = findOperation(actual);
+    assertRowRequest(row, rowId, expectedOperation);
+    assertRowRequest(row, rowId, actualOperation);
+    assertRowResponse(row, rowId, expectedOperation);
+    assertRowResponse(row, rowId, actualOperation);
+    assertRowEvents(row, rowId, expected);
+    assertRowEvents(row, rowId, actual);
+  }
 }
 
 function assertScenarioOperationsEquivalent(
@@ -155,16 +376,9 @@ export function assertEquivalentScenarioReports(
   shim: ComparableReport,
   matrixRows: readonly unknown[] = []
 ): void {
-  for (const row of matrixRows) {
-    if (!isRecordValue(row)) continue;
-    const normalization = row.normalization;
-    if (Array.isArray(normalization) && normalization.length > 0)
-      throw new Error(
-        `Shim acceptance cannot compare matrix row ${String(row.id)}: normalization is not implemented.`
-      );
-  }
   if (reference.corpusId !== shim.corpusId)
     throw new Error("Shim acceptance report corpus does not match reference.");
+  assertMatrixRows(matrixRows, reference, shim);
   const referenceById = new Map(
     reference.scenarios.map((scenario) => [scenario.id, scenario])
   );
@@ -243,9 +457,10 @@ export function assertAcceptanceReport(
     );
 }
 
-async function loadReferenceScenarioReport(
-  manifestPath: string
-): Promise<ComparableReport> {
+async function loadReferenceScenarioReport(manifestPath: string): Promise<{
+  readonly manifestT3Commit: string;
+  readonly report: ComparableReport;
+}> {
   const manifest = await verifyReferenceArtifacts(manifestPath);
   const scenarioPath =
     manifest.scenarioOutput ?? `artifacts/runs/${manifest.corpusId}.json`;
@@ -255,9 +470,12 @@ async function loadReferenceScenarioReport(
   if (report.corpusId !== manifest.corpusId || report.runId !== manifest.runId)
     throw new Error("Reference scenario report does not match its manifest.");
   return {
-    corpusId: report.corpusId,
-    scenarios: report.scenarios,
-    status: report.status,
+    manifestT3Commit: manifest.t3Commit,
+    report: {
+      corpusId: report.corpusId,
+      scenarios: report.scenarios,
+      status: report.status,
+    },
   };
 }
 
@@ -315,6 +533,15 @@ export async function runAcceptance(
     referenceManifestPath.trim().length === 0
   )
     throw new Error("Shim acceptance requires REFERENCE_MANIFEST.");
+  const referenceEvidence = await loadReferenceScenarioReport(
+    referenceManifestPath
+  );
+  if (options.harness === undefined) {
+    const t3Cwd = Bun.env.SHIM_ACCEPTANCE_T3_CWD;
+    if (t3Cwd === undefined || t3Cwd.trim().length === 0)
+      throw new Error("SHIM_ACCEPTANCE_T3_CWD is required.");
+    await assertPinnedT3Checkout(t3Cwd, referenceEvidence.manifestT3Commit);
+  }
   const acceptanceRunId = crypto.randomUUID();
   const startedAtMs = Date.now();
   const generatedScenarioOutput = resolve(
@@ -331,7 +558,6 @@ export async function runAcceptance(
     target,
     timeoutMs,
   });
-  const reference = await loadReferenceScenarioReport(referenceManifestPath);
   const report = await loadShimScenarioReport(
     generatedScenarioOutput,
     target,
@@ -340,7 +566,7 @@ export async function runAcceptance(
   );
   assertAcceptanceReport(report);
   assertEquivalentScenarioReports(
-    reference,
+    referenceEvidence.report,
     report as unknown as ComparableReport,
     matrix.rows
   );
