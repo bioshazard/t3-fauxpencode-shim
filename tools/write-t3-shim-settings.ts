@@ -34,7 +34,7 @@ export function writeT3ShimSettings(home: string, serverUrl: string): string {
         },
         textGenerationModelSelection: {
           instanceId: "opencode",
-          model: "configured",
+          model: "pi/configured",
           options: [],
         },
       },

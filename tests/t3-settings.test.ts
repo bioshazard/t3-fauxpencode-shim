@@ -18,7 +18,7 @@ test("writes an isolated T3 shim-only provider configuration", () => {
       },
       textGenerationModelSelection: {
         instanceId: "opencode",
-        model: "configured",
+        model: "pi/configured",
         options: [],
       },
     });
