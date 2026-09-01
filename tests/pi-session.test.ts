@@ -3,13 +3,97 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, UserMessage } from "@earendil-works/pi-ai";
-import { SessionManager } from "@earendil-works/pi-coding-agent";
+import {
+  SessionManager,
+  type AgentSession,
+  type AgentSessionEvent,
+} from "@earendil-works/pi-coding-agent";
 
-import { PiSessionBackend, SessionRegistry } from "../src/sessions.ts";
+import {
+  PiBackendSession,
+  PiSessionBackend,
+  SessionRegistry,
+} from "../src/sessions.ts";
+import type { FacadeEvent } from "../src/types.ts";
 import type { ShimConfig } from "../src/types.ts";
 
 describe("Pi session backend", () => {
+  test("relays a detached completion after its originating prompt settles", async () => {
+    const messages: AgentMessage[] = [];
+    let listener: ((event: AgentSessionEvent) => void) | undefined;
+    const session = {
+      dispose: () => undefined,
+      get isStreaming() {
+        return false;
+      },
+      messages,
+      model: undefined,
+      prompt: async () => undefined,
+      sessionManager: {
+        getEntries: () => [],
+        getHeader: () => null,
+      },
+      subscribe: (next: (event: AgentSessionEvent) => void) => {
+        listener = next;
+        return () => {
+          listener = undefined;
+        };
+      },
+    };
+    const backend = new PiBackendSession(
+      "parent",
+      session as unknown as AgentSession,
+      process.cwd(),
+      "parent",
+      [],
+      { agent: "pi", modelId: "configured", providerId: "pi" }
+    );
+    const seen: FacadeEvent[] = [];
+
+    await backend.prompt("start a detached worker", (event) =>
+      seen.push(event)
+    );
+
+    const completed: AssistantMessage = {
+      api: "pi-messages",
+      content: [{ text: "worker finished", type: "text" }],
+      model: "test-model",
+      provider: "test",
+      role: "assistant",
+      stopReason: "stop",
+      timestamp: Date.now(),
+      usage: {
+        cacheRead: 0,
+        cacheWrite: 0,
+        cost: { cacheRead: 0, cacheWrite: 0, input: 0, output: 0, total: 0 },
+        input: 0,
+        output: 0,
+        totalTokens: 0,
+      },
+    };
+    messages.push(completed);
+    listener?.({
+      message: completed,
+      type: "message_end",
+    } as AgentSessionEvent);
+
+    expect(backend.snapshot().messages).toContainEqual(
+      expect.objectContaining({
+        parts: [{ text: "worker finished", type: "text" }],
+      })
+    );
+    expect(
+      seen.filter(
+        (event) =>
+          event.type === "message.part.updated" &&
+          (event.properties.part as { readonly text?: string }).text ===
+            "worker finished"
+      )
+    ).toHaveLength(1);
+  });
+
   test("reopens a persisted Pi JSONL session", async () => {
     const sessionDir = `/tmp/pi-opencode-shim-test-${crypto.randomUUID()}`;
     const config: ShimConfig = {

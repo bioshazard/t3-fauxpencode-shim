@@ -1,3 +1,12 @@
+import { readFile } from "node:fs/promises";
+
+import {
+  DefaultResourceLoader,
+  getAgentDir,
+  SettingsManager,
+} from "@earendil-works/pi-coding-agent";
+
+import { ActiveDirectoryTracker } from "./active-directory.ts";
 import { canonicalAllowedCwd, loadConfig, normalizeConfig } from "./config.ts";
 import { contractError } from "./contract.ts";
 import { EventHub } from "./events.ts";
@@ -66,6 +75,33 @@ function isAssistantMessageEntry(entry: { readonly info: JsonValue }): boolean {
   return info.role === "assistant";
 }
 
+async function discoverPiSkills(
+  config: ShimConfig
+): Promise<readonly JsonValue[]> {
+  const agentDir = config.agentDir ?? getAgentDir();
+  const loader = new DefaultResourceLoader({
+    agentDir,
+    cwd: config.cwd,
+    settingsManager: SettingsManager.create(config.cwd, agentDir),
+  });
+  await loader.reload();
+  const skills = loader.getSkills().skills;
+  return Promise.all(
+    skills.map(async (skill) => {
+      try {
+        return {
+          content: await readFile(skill.filePath, "utf8"),
+          description: skill.description,
+          location: skill.filePath,
+          name: skill.name,
+        };
+      } catch {
+        return null;
+      }
+    })
+  ).then((items) => items.filter((item) => item !== null));
+}
+
 export function createHandler(
   config: ShimConfig,
   sessions = new SessionRegistry(new InMemorySessionBackend()),
@@ -86,6 +122,22 @@ function createSessionHandler(
   sessions: SessionRegistry,
   events: EventHub
 ): (request: Request) => Response | Promise<Response> {
+  const piSkillDiscovery = discoverPiSkills(config);
+  // T3 omits cwd on POST /session. Its project event stream is the strongest
+  // available directory signal, so use only that stream rather than unrelated
+  // background discovery requests from other projects.
+  const activeDirectories = new ActiveDirectoryTracker();
+  const trackEventDirectory = (url: URL): void => {
+    const directory = url.searchParams.get("directory");
+    if (directory === null || directory.length === 0) return;
+    const canonicalDirectory = canonicalAllowedCwd(
+      directory,
+      config.allowedRoots
+    );
+    if (canonicalDirectory !== null)
+      activeDirectories.record(canonicalDirectory);
+  };
+
   return (request) => {
     const url = new URL(request.url);
 
@@ -105,7 +157,6 @@ function createSessionHandler(
 
     if (
       url.pathname === "/agent" ||
-      url.pathname === "/skill" ||
       url.pathname === "/permission" ||
       url.pathname === "/question"
     ) {
@@ -113,52 +164,57 @@ function createSessionHandler(
       return jsonResponse([]);
     }
 
+    if (url.pathname === "/skill") {
+      if (request.method !== "GET") return methodNotAllowed(request);
+      return piSkillDiscovery.then((skills) => jsonResponse(skills));
+    }
+
     if (url.pathname === "/global/event" || url.pathname === "/event") {
       if (request.method !== "GET") return methodNotAllowed(request);
+      trackEventDirectory(url);
       return events.response();
     }
 
     if (url.pathname === "/session" && request.method === "POST") {
-      return readCreateSessionRequest(request, config.cwd).then(
-        async (parsed) => {
-          if (parsed.kind === "error") {
-            return jsonResponse(
-              contractError("invalid_request", parsed.message),
-              400
-            );
-          }
-          const canonicalCwd = canonicalAllowedCwd(
-            parsed.input.cwd,
-            config.allowedRoots
+      return readCreateSessionRequest(
+        request,
+        activeDirectories.current() ?? config.cwd
+      ).then(async (parsed) => {
+        if (parsed.kind === "error") {
+          return jsonResponse(
+            contractError("invalid_request", parsed.message),
+            400
           );
-          if (canonicalCwd === null) {
-            return jsonResponse(
-              contractError(
-                "cwd_not_allowed",
-                "The requested session cwd is outside the configured roots."
-              ),
-              403
-            );
-          }
-          try {
-            return jsonResponse(
-              sessionResponse(
-                await sessions.createSession({
-                  ...parsed.input,
-                  cwd: canonicalCwd,
-                }),
-                config
-              )
-            );
-          } catch (error) {
-            const message =
-              error instanceof Error
-                ? error.message
-                : "Session creation failed.";
-            return jsonResponse(contractError("session_exists", message), 409);
-          }
         }
-      );
+        const canonicalCwd = canonicalAllowedCwd(
+          parsed.input.cwd,
+          config.allowedRoots
+        );
+        if (canonicalCwd === null) {
+          return jsonResponse(
+            contractError(
+              "cwd_not_allowed",
+              "The requested session cwd is outside the configured roots."
+            ),
+            403
+          );
+        }
+        try {
+          return jsonResponse(
+            sessionResponse(
+              await sessions.createSession({
+                ...parsed.input,
+                cwd: canonicalCwd,
+              }),
+              config
+            )
+          );
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : "Session creation failed.";
+          return jsonResponse(contractError("session_exists", message), 409);
+        }
+      });
     }
 
     if (url.pathname === "/session" && request.method === "GET") {
