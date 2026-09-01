@@ -31,3 +31,13 @@ Configuration:
 - `PI_PROVIDER` / `PI_MODEL`: provider discovery presentation values; Pi still resolves runtime model/auth through its native configuration.
 
 Runtime request logging is emitted as JSON Lines to stdout. Each completed request records its method, path, query, safe headers, status, and duration. JSON request shapes are captured with prompt/image content and sensitive values redacted; samples cap at 16 KiB. This is intended for locally observing new T3 requests without leaking credentials or prompt contents.
+
+## T3 web fixture
+
+Start the shim, then launch T3 with an isolated shim-only state directory:
+
+```sh
+PI_OPENCODE_URL=http://127.0.0.1:41874 bun run t3:shim
+```
+
+The command writes `artifacts/t3-shim-home/userdata/settings.json`, disables Codex and Claude, enables OpenCode, and starts the pinned local T3 checkout. Set `T3_ROOT` for another checkout or `T3_HOME` for another disposable state directory. The settings file is deliberately rewritten on every launch.

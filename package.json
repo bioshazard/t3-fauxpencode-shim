@@ -21,6 +21,7 @@
     "contract:acceptance": "bun run tools/contract/acceptance.ts",
     "contract:record": "bun run tools/contract/record.ts",
     "contract:scenarios": "bun run tools/contract/scenarios.ts",
+    "t3:shim": "bash tools/run-t3-shim.sh",
     "test:e2e": "playwright test",
     "prepare": "lefthook install"
   },
