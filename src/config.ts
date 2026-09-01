@@ -1,5 +1,13 @@
 import { realpathSync } from "node:fs";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  sep,
+} from "node:path";
 
 import type { Environment, ShimConfig } from "./types.ts";
 
@@ -41,21 +49,30 @@ function configuredRoots(
 }
 
 function canonicalPath(value: string): string | null {
-  try {
-    return realpathSync(resolve(value));
-  } catch {
-    return null;
+  let current = resolve(value);
+  const suffix: string[] = [];
+  while (true) {
+    try {
+      return suffix.reduceRight(
+        (path, segment) => join(path, segment),
+        realpathSync(current)
+      );
+    } catch {
+      const parent = dirname(current);
+      if (parent === current) return null;
+      suffix.push(basename(current));
+      current = parent;
+    }
   }
 }
 
-export function isAllowedCwd(
+export function canonicalAllowedCwd(
   cwd: string,
-  roots: readonly string[] | undefined
-): boolean {
-  if (roots === undefined) return true;
+  roots: readonly string[]
+): string | null {
   const canonicalCwd = canonicalPath(cwd);
-  if (canonicalCwd === null) return false;
-  return roots.some((root) => {
+  if (canonicalCwd === null) return null;
+  const allowed = roots.some((root) => {
     const canonicalRoot = canonicalPath(root);
     if (canonicalRoot === null) return false;
     const relativeCwd = relative(canonicalRoot, canonicalCwd);
@@ -66,6 +83,16 @@ export function isAllowedCwd(
         !isAbsolute(relativeCwd))
     );
   });
+  return allowed ? canonicalCwd : null;
+}
+
+export function isAllowedCwd(cwd: string, roots: readonly string[]): boolean {
+  return canonicalAllowedCwd(cwd, roots) !== null;
+}
+
+export function normalizeConfig(config: ShimConfig): ShimConfig {
+  if (Array.isArray(config.allowedRoots)) return config;
+  return { ...config, allowedRoots: [config.cwd] };
 }
 
 function configuredPort(value: string | undefined): number {

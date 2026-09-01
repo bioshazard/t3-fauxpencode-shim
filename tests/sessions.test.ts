@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { realpathSync } from "node:fs";
 import { mkdtemp, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,6 +10,7 @@ import type { ShimConfig } from "../src/types.ts";
 
 const config: ShimConfig = {
   agentDir: undefined,
+  allowedRoots: ["/tmp"],
   cwd: "/tmp/poc",
   host: "127.0.0.1",
   modelId: "test-model",
@@ -78,7 +80,7 @@ describe("session registry facade", () => {
     expect(created.status).toBe(200);
     expect(await created.json()).toMatchObject({
       id: "thread-1",
-      directory: "/tmp/poc",
+      directory: `${realpathSync("/tmp")}/poc`,
       title: "Pi session thread-1",
     });
 

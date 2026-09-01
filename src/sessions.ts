@@ -7,6 +7,7 @@ import {
   type CreateAgentSessionOptions,
 } from "@earendil-works/pi-coding-agent";
 
+import { canonicalAllowedCwd, normalizeConfig } from "./config.ts";
 import {
   translateAgentEvent,
   translateMessages,
@@ -562,7 +563,11 @@ class PiBackendSession implements BackendSession {
 }
 
 export class PiSessionBackend implements SessionBackend {
-  constructor(private readonly config: ShimConfig) {}
+  private readonly config: ShimConfig;
+
+  constructor(config: ShimConfig) {
+    this.config = normalizeConfig(config);
+  }
 
   private async createPiSession(
     input: CreateSessionInput,
@@ -600,32 +605,36 @@ export class PiSessionBackend implements SessionBackend {
 
   async listSessions(): Promise<readonly SessionSnapshot[]> {
     const sessions = await SessionManager.listAll(this.config.sessionDir);
-    return sessions.map((session) => ({
-      cwd: session.cwd,
-      id: session.id,
-      messages: [],
-      permission: [],
-      status: "idle",
-      title: `Pi session ${session.id}`,
-      time: {
-        created: session.created.getTime(),
-        updated: session.modified.getTime(),
-      },
-    }));
+    return sessions.flatMap((session) => {
+      const cwd = canonicalAllowedCwd(session.cwd, this.config.allowedRoots);
+      if (cwd === null) return [];
+      return [
+        {
+          cwd,
+          id: session.id,
+          messages: [],
+          permission: [],
+          status: "idle" as const,
+          title: `Pi session ${session.id}`,
+          time: {
+            created: session.created.getTime(),
+            updated: session.modified.getTime(),
+          },
+        },
+      ];
+    });
   }
 
   async openSession(id: string): Promise<BackendSession | null> {
     const sessions = await SessionManager.listAll(this.config.sessionDir);
     const info = sessions.find((session) => session.id === id);
     if (info === undefined) return null;
-    const manager = SessionManager.open(
-      info.path,
-      this.config.sessionDir,
-      info.cwd
-    );
+    const cwd = canonicalAllowedCwd(info.cwd, this.config.allowedRoots);
+    if (cwd === null) return null;
+    const manager = SessionManager.open(info.path, this.config.sessionDir, cwd);
     return this.createPiSession(
       {
-        cwd: info.cwd,
+        cwd,
         id: info.id,
         permission: [],
         title: `Pi session ${info.id}`,

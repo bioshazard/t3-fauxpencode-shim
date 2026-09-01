@@ -1,4 +1,4 @@
-import { isAllowedCwd, loadConfig } from "./config.ts";
+import { canonicalAllowedCwd, loadConfig, normalizeConfig } from "./config.ts";
 import { contractError } from "./contract.ts";
 import { EventHub } from "./events.ts";
 import {
@@ -70,7 +70,7 @@ export function createHandler(
   sessions = new SessionRegistry(new InMemorySessionBackend()),
   events = new EventHub()
 ): (request: Request) => Response | Promise<Response> {
-  return createSessionHandler(config, sessions, events);
+  return createSessionHandler(normalizeConfig(config), sessions, events);
 }
 
 function notFound(): Response {
@@ -126,7 +126,11 @@ function createSessionHandler(
               400
             );
           }
-          if (!isAllowedCwd(parsed.input.cwd, config.allowedRoots)) {
+          const canonicalCwd = canonicalAllowedCwd(
+            parsed.input.cwd,
+            config.allowedRoots
+          );
+          if (canonicalCwd === null) {
             return jsonResponse(
               contractError(
                 "cwd_not_allowed",
@@ -138,7 +142,10 @@ function createSessionHandler(
           try {
             return jsonResponse(
               sessionResponse(
-                await sessions.createSession(parsed.input),
+                await sessions.createSession({
+                  ...parsed.input,
+                  cwd: canonicalCwd,
+                }),
                 config
               )
             );
@@ -346,13 +353,14 @@ function createSessionHandler(
 export function runServer(
   config: ShimConfig = loadConfig()
 ): Bun.Server<undefined> {
-  const sessions = new SessionRegistry(new PiSessionBackend(config));
+  const normalizedConfig = normalizeConfig(config);
+  const sessions = new SessionRegistry(new PiSessionBackend(normalizedConfig));
   const events = new EventHub();
   const server = Bun.serve({
-    fetch: createSessionHandler(config, sessions, events),
-    hostname: config.host,
+    fetch: createSessionHandler(normalizedConfig, sessions, events),
+    hostname: normalizedConfig.host,
     idleTimeout: SSE_IDLE_TIMEOUT_SECONDS,
-    port: config.port,
+    port: normalizedConfig.port,
   });
   console.log(`pi-opencode-server listening on ${server.url}`);
   return server;

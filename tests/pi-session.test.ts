@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import type { AssistantMessage, UserMessage } from "@earendil-works/pi-ai";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
@@ -11,6 +14,7 @@ describe("Pi session backend", () => {
     const sessionDir = `/tmp/pi-opencode-shim-test-${crypto.randomUUID()}`;
     const config: ShimConfig = {
       agentDir: undefined,
+      allowedRoots: ["/tmp"],
       cwd: "/tmp/pi-poc",
       host: "127.0.0.1",
       modelId: "configured",
@@ -66,6 +70,65 @@ describe("Pi session backend", () => {
       });
     } finally {
       await Bun.spawn(["rm", "-rf", sessionDir]).exited;
+    }
+  });
+
+  test("hides persisted sessions outside the configured roots", async () => {
+    const sessionDir = await mkdtemp(join(tmpdir(), "pi-shim-sessions-"));
+    const allowedRoot = await mkdtemp(join(tmpdir(), "pi-shim-allowed-"));
+    const outsideRoot = await mkdtemp(join(tmpdir(), "pi-shim-outside-"));
+    const config: ShimConfig = {
+      agentDir: undefined,
+      allowedRoots: [allowedRoot],
+      cwd: allowedRoot,
+      host: "127.0.0.1",
+      modelId: "configured",
+      port: 4096,
+      providerId: "pi",
+      sessionDir,
+      version: "test",
+    };
+
+    try {
+      const allowed = SessionManager.create(allowedRoot, sessionDir, {
+        id: "allowed",
+      });
+      const outside = SessionManager.create(outsideRoot, sessionDir, {
+        id: "outside",
+      });
+      allowed.appendCustomEntry("pi-opencode-shim", { facadeId: "allowed" });
+      outside.appendCustomEntry("pi-opencode-shim", { facadeId: "outside" });
+      const assistant: AssistantMessage = {
+        api: "pi-messages",
+        content: [{ text: "persisted", type: "text" }],
+        model: "test-model",
+        provider: "test",
+        role: "assistant",
+        stopReason: "stop",
+        timestamp: Date.now(),
+        usage: {
+          cacheRead: 0,
+          cacheWrite: 0,
+          cost: { cacheRead: 0, cacheWrite: 0, input: 0, output: 0, total: 0 },
+          input: 0,
+          output: 0,
+          totalTokens: 0,
+        },
+      };
+      allowed.appendMessage(assistant);
+      outside.appendMessage(assistant);
+      const backend = new PiSessionBackend(config);
+
+      expect(
+        (await backend.listSessions()).map((session) => session.id)
+      ).toEqual(["allowed"]);
+      expect(await backend.openSession("outside")).toBeNull();
+    } finally {
+      await Promise.all([
+        rm(sessionDir, { force: true, recursive: true }),
+        rm(allowedRoot, { force: true, recursive: true }),
+        rm(outsideRoot, { force: true, recursive: true }),
+      ]);
     }
   });
 });

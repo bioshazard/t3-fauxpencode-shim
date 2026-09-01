@@ -7,6 +7,7 @@ import type { FacadeEvent, ShimConfig } from "../src/types.ts";
 
 const config: ShimConfig = {
   agentDir: undefined,
+  allowedRoots: ["/tmp"],
   cwd: "/tmp/poc",
   host: "127.0.0.1",
   modelId: "test-model",
