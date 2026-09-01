@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { beforeAll, afterAll, describe, expect, test } from "bun:test";
 import { realpathSync } from "node:fs";
 import { mkdtemp, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -137,6 +137,100 @@ describe("session registry facade", () => {
         code: "unknown_session",
         message: "The requested session does not exist.",
       },
+    });
+  });
+});
+
+describe("session creation directory fallback", () => {
+  let root: string;
+  let projectA: string;
+  let projectB: string;
+
+  beforeAll(async () => {
+    root = await mkdtemp(join(tmpdir(), "pi-shim-fallback-"));
+    projectA = await mkdtemp(join(root, "project-a-"));
+    projectB = await mkdtemp(join(root, "project-b-"));
+  });
+
+  afterAll(async () => {
+    await rm(root, { force: true, recursive: true });
+  });
+
+  const fallbackHandler = () =>
+    createHandler(
+      { ...config, cwd: root, allowedRoots: [root] },
+      new SessionRegistry(new InMemorySessionBackend())
+    );
+
+  test("still falls back to the configured cwd when nothing was signaled", async () => {
+    const response = await fallbackHandler()(
+      post(JSON.stringify({ id: "quiet" }))
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      directory: realpathSync(root),
+      id: "quiet",
+    });
+  });
+
+  test("creates the session in the directory signaled by the /event stream", async () => {
+    const handler = fallbackHandler();
+    const events = await handler(
+      new Request(`http://shim.test/event?directory=${projectA}`)
+    );
+    expect(events.status).toBe(200);
+
+    const response = await handler(post(JSON.stringify({ id: "from-event" })));
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      directory: realpathSync(projectA),
+      id: "from-event",
+    });
+  });
+
+  test("lets an explicit cwd win over the tracked directory", async () => {
+    const handler = fallbackHandler();
+    await handler(new Request(`http://shim.test/event?directory=${projectA}`));
+
+    const response = await handler(
+      post(JSON.stringify({ cwd: projectB, id: "explicit" }))
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      directory: realpathSync(projectB),
+      id: "explicit",
+    });
+  });
+
+  test("ignores an event directory outside the allowed roots", async () => {
+    const handler = fallbackHandler();
+    await handler(new Request(`http://shim.test/event?directory=${tmpdir()}`));
+
+    const response = await handler(post(JSON.stringify({ id: "outside" })));
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      directory: realpathSync(root),
+      id: "outside",
+    });
+  });
+
+  test("does not let background discovery override an event directory", async () => {
+    const handler = fallbackHandler();
+    await handler(new Request(`http://shim.test/event?directory=${projectA}`));
+    await handler(
+      new Request(`http://shim.test/global/health?directory=${projectB}`)
+    );
+
+    const response = await handler(post(JSON.stringify({ id: "event-wins" })));
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      directory: realpathSync(projectA),
+      id: "event-wins",
     });
   });
 });

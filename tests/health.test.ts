@@ -125,6 +125,24 @@ describe("health and discovery", () => {
     });
   });
 
+  test("accepts T3 directory query params on discovery routes", async () => {
+    const health = await request("/global/health?directory=/tmp/projects/x");
+    expect(health.status).toBe(200);
+    expect(await health.json()).toEqual({
+      healthy: true,
+      service: "pi-opencode-server",
+      version: "test",
+    });
+
+    const permissions = await request("/permission?directory=/tmp/projects/x");
+    expect(permissions.status).toBe(200);
+    expect(await permissions.json()).toEqual([]);
+
+    const events = await request("/event?directory=/tmp/projects/x");
+    expect(events.status).toBe(200);
+    expect(events.headers.get("content-type")).toContain("text/event-stream");
+  });
+
   test("rejects wrong methods", async () => {
     const response = await request("/global/health", "POST");
 
