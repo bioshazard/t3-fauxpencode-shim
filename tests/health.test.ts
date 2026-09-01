@@ -23,6 +23,21 @@ describe("health and discovery", () => {
     expect(loadConfig({}).version).toBe("1.14.19");
   });
 
+  test("loads allowed roots from JSON configuration", () => {
+    expect(
+      loadConfig({
+        PI_ALLOWED_ROOTS: JSON.stringify({ roots: ["/tmp/projects"] }),
+        PI_CWD: "/tmp",
+      }).allowedRoots
+    ).toEqual(["/tmp/projects"]);
+  });
+
+  test("rejects malformed allowed roots configuration", () => {
+    expect(() => loadConfig({ PI_ALLOWED_ROOTS: "not-json" })).toThrow(
+      "PI_ALLOWED_ROOTS must be valid JSON."
+    );
+  });
+
   test("keeps Bun SSE connections alive indefinitely", () => {
     expect(SSE_IDLE_TIMEOUT_SECONDS).toBe(0);
   });

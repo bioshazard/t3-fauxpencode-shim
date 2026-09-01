@@ -8,6 +8,7 @@ export type JsonValue =
 export type Environment = Readonly<Record<string, string | undefined>>;
 
 export interface ShimConfig {
+  readonly allowedRoots?: readonly string[];
   readonly host: string;
   readonly port: number;
   readonly cwd: string;

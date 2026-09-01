@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtemp, rm, symlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { createHandler } from "../src/server.ts";
 import { InMemorySessionBackend, SessionRegistry } from "../src/sessions.ts";
@@ -24,6 +27,49 @@ function post(body: string) {
 }
 
 describe("session registry facade", () => {
+  test("rejects session cwd outside configured allowed roots", async () => {
+    const handler = createHandler(
+      { ...config, allowedRoots: [process.cwd()] },
+      new SessionRegistry(new InMemorySessionBackend())
+    );
+
+    const response = await handler(
+      post(JSON.stringify({ cwd: "/tmp", id: "outside-root" }))
+    );
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({
+      error: {
+        code: "cwd_not_allowed",
+        message: "The requested session cwd is outside the configured roots.",
+      },
+    });
+  });
+
+  test("rejects a symlinked cwd that escapes an allowed root", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pi-shim-root-"));
+    const outside = await mkdtemp(join(tmpdir(), "pi-shim-outside-"));
+    const linked = join(root, "linked");
+    await symlink(outside, linked, "dir");
+
+    try {
+      const handler = createHandler(
+        { ...config, allowedRoots: [root] },
+        new SessionRegistry(new InMemorySessionBackend())
+      );
+      const response = await handler(
+        post(JSON.stringify({ cwd: linked, id: "symlink-escape" }))
+      );
+
+      expect(response.status).toBe(403);
+    } finally {
+      await Promise.all([
+        rm(root, { force: true, recursive: true }),
+        rm(outside, { force: true, recursive: true }),
+      ]);
+    }
+  });
+
   test("creates, lists, reads, and lazily reopens a session", async () => {
     const backend = new InMemorySessionBackend();
     const first = createHandler(config, new SessionRegistry(backend));

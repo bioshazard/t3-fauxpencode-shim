@@ -1,4 +1,4 @@
-import { loadConfig } from "./config.ts";
+import { isAllowedCwd, loadConfig } from "./config.ts";
 import { contractError } from "./contract.ts";
 import { EventHub } from "./events.ts";
 import {
@@ -124,6 +124,15 @@ function createSessionHandler(
             return jsonResponse(
               contractError("invalid_request", parsed.message),
               400
+            );
+          }
+          if (!isAllowedCwd(parsed.input.cwd, config.allowedRoots)) {
+            return jsonResponse(
+              contractError(
+                "cwd_not_allowed",
+                "The requested session cwd is outside the configured roots."
+              ),
+              403
             );
           }
           try {
