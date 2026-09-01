@@ -1,6 +1,7 @@
 import { canonicalAllowedCwd, loadConfig, normalizeConfig } from "./config.ts";
 import { contractError } from "./contract.ts";
 import { EventHub } from "./events.ts";
+import { createRequestLogger } from "./logging.ts";
 import {
   messagesResponse,
   providerResponse,
@@ -356,8 +357,16 @@ export function runServer(
   const normalizedConfig = normalizeConfig(config);
   const sessions = new SessionRegistry(new PiSessionBackend(normalizedConfig));
   const events = new EventHub();
+  const handler = createSessionHandler(normalizedConfig, sessions, events);
+  const logger = createRequestLogger((entry) =>
+    console.log(JSON.stringify(entry))
+  );
   const server = Bun.serve({
-    fetch: createSessionHandler(normalizedConfig, sessions, events),
+    fetch(request) {
+      const response = Promise.resolve(handler(request));
+      logger.log(request, response, performance.now());
+      return response;
+    },
     hostname: normalizedConfig.host,
     idleTimeout: SSE_IDLE_TIMEOUT_SECONDS,
     port: normalizedConfig.port,

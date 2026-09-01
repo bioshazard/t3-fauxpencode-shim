@@ -29,3 +29,5 @@ Configuration:
 - `PI_ALLOWED_ROOTS`: JSON array of allowed session roots (or `{"roots":[...]}`); defaults to `PI_CWD`.
 - `PI_OPENCODE_HOST` / `PI_OPENCODE_PORT`: listener address.
 - `PI_PROVIDER` / `PI_MODEL`: provider discovery presentation values; Pi still resolves runtime model/auth through its native configuration.
+
+Runtime request logging is emitted as JSON Lines to stdout. Each completed request records its method, path, query, safe headers, status, and duration. JSON request shapes are captured with prompt/image content and sensitive values redacted; samples cap at 16 KiB. This is intended for locally observing new T3 requests without leaking credentials or prompt contents.
