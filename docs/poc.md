@@ -40,4 +40,12 @@ Start the shim, then launch T3 with an isolated shim-only state directory:
 PI_OPENCODE_URL=http://127.0.0.1:41874 bun run t3:shim
 ```
 
-The command writes `artifacts/t3-shim-home/userdata/settings.json`, disables Codex and Claude, enables OpenCode, and sets T3 text generation to `pi/configured`. It starts the pinned local T3 checkout. Set `T3_ROOT` for another checkout or `T3_HOME` for another disposable state directory. The settings file is deliberately rewritten on every launch.
+The command writes `artifacts/t3-shim-home/userdata/settings.json`, disables Codex and Claude, enables OpenCode, and sets T3 text generation to `pi/configured`. It starts the published `t3@0.0.37` CLI by default. Set `T3_ROOT` to use a source checkout for debugging, `T3_VERSION` for another exact release, or `T3_HOME` for another disposable state directory. The settings file is deliberately rewritten on every launch.
+
+To keep local services detached from the terminal, run:
+
+```sh
+bun run dev:local
+```
+
+Then use `bun run logs:local` and `bun run stop:local`. PM2 runs both the shim and T3; it does not enable watch mode, because T3 already manages its own development processes when `T3_ROOT` is used.
