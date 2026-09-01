@@ -29,7 +29,7 @@ async function createSession(
 ): Promise<void> {
   const response = await handler(
     new Request("http://shim.test/session", {
-      body: JSON.stringify({ id }),
+      body: JSON.stringify({ cwd: process.cwd(), id }),
       headers: { "content-type": "application/json" },
       method: "POST",
     })

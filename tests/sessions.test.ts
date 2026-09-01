@@ -75,7 +75,9 @@ describe("session registry facade", () => {
   test("creates, lists, reads, and lazily reopens a session", async () => {
     const backend = new InMemorySessionBackend();
     const first = createHandler(config, new SessionRegistry(backend));
-    const created = await first(post(JSON.stringify({ id: "thread-1" })));
+    const created = await first(
+      post(JSON.stringify({ cwd: process.cwd(), id: "thread-1" }))
+    );
 
     expect(created.status).toBe(200);
     expect(await created.json()).toMatchObject({
@@ -120,8 +122,12 @@ describe("session registry facade", () => {
     const invalid = await handler(post(JSON.stringify({ cwd: 42 })));
     expect(invalid.status).toBe(400);
 
-    const created = await handler(post(JSON.stringify({ id: "same" })));
-    const duplicate = await handler(post(JSON.stringify({ id: "same" })));
+    const created = await handler(
+      post(JSON.stringify({ cwd: process.cwd(), id: "same" }))
+    );
+    const duplicate = await handler(
+      post(JSON.stringify({ cwd: process.cwd(), id: "same" }))
+    );
     expect(created.status).toBe(200);
     expect(duplicate.status).toBe(409);
   });
@@ -141,7 +147,7 @@ describe("session registry facade", () => {
   });
 });
 
-describe("session creation directory fallback", () => {
+describe("session creation directory selection", () => {
   let root: string;
   let projectA: string;
   let projectB: string;
@@ -156,26 +162,33 @@ describe("session creation directory fallback", () => {
     await rm(root, { force: true, recursive: true });
   });
 
-  const fallbackHandler = () =>
+  const directoryHandler = () =>
     createHandler(
       { ...config, cwd: root, allowedRoots: [root] },
       new SessionRegistry(new InMemorySessionBackend())
     );
 
-  test("still falls back to the configured cwd when nothing was signaled", async () => {
-    const response = await fallbackHandler()(
-      post(JSON.stringify({ id: "quiet" }))
-    );
+  test("requires an explicit cwd or a project event directory", async () => {
+    const handler = directoryHandler();
+    const response = await handler(post(JSON.stringify({ id: "quiet" })));
 
-    expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({
-      directory: realpathSync(root),
-      id: "quiet",
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({
+      error: {
+        code: "cwd_required",
+        message:
+          "An explicit session cwd or an allowed T3 project directory is required.",
+      },
     });
+
+    const empty = await handler(
+      new Request("http://shim.test/session", { method: "POST" })
+    );
+    expect(empty.status).toBe(409);
   });
 
   test("creates the session in the directory signaled by the /event stream", async () => {
-    const handler = fallbackHandler();
+    const handler = directoryHandler();
     const events = await handler(
       new Request(`http://shim.test/event?directory=${projectA}`)
     );
@@ -191,7 +204,7 @@ describe("session creation directory fallback", () => {
   });
 
   test("lets an explicit cwd win over the tracked directory", async () => {
-    const handler = fallbackHandler();
+    const handler = directoryHandler();
     await handler(new Request(`http://shim.test/event?directory=${projectA}`));
 
     const response = await handler(
@@ -206,20 +219,23 @@ describe("session creation directory fallback", () => {
   });
 
   test("ignores an event directory outside the allowed roots", async () => {
-    const handler = fallbackHandler();
+    const handler = directoryHandler();
     await handler(new Request(`http://shim.test/event?directory=${tmpdir()}`));
 
     const response = await handler(post(JSON.stringify({ id: "outside" })));
 
-    expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({
-      directory: realpathSync(root),
-      id: "outside",
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({
+      error: {
+        code: "cwd_required",
+        message:
+          "An explicit session cwd or an allowed T3 project directory is required.",
+      },
     });
   });
 
   test("does not let background discovery override an event directory", async () => {
-    const handler = fallbackHandler();
+    const handler = directoryHandler();
     await handler(new Request(`http://shim.test/event?directory=${projectA}`));
     await handler(
       new Request(`http://shim.test/global/health?directory=${projectB}`)

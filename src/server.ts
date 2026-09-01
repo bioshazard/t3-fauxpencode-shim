@@ -178,12 +178,21 @@ function createSessionHandler(
     if (url.pathname === "/session" && request.method === "POST") {
       return readCreateSessionRequest(
         request,
-        activeDirectories.current() ?? config.cwd
+        activeDirectories.current()
       ).then(async (parsed) => {
         if (parsed.kind === "error") {
           return jsonResponse(
             contractError("invalid_request", parsed.message),
             400
+          );
+        }
+        if (parsed.kind === "missing_cwd") {
+          return jsonResponse(
+            contractError(
+              "cwd_required",
+              "An explicit session cwd or an allowed T3 project directory is required."
+            ),
+            409
           );
         }
         const canonicalCwd = canonicalAllowedCwd(

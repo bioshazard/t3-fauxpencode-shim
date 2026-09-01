@@ -4,6 +4,24 @@ See [`docs/poc.md`](docs/poc.md) for the provisional facade surface and known ca
 
 Small Bun service exposing the OpenCode-shaped surface needed by the documented T3 integration, backed by Pi sessions.
 
+## Run
+
+Run it in the project directory T3 will use. By default, only that directory is permitted for sessions:
+
+```sh
+bunx --package github:bioshazard/t3-fauxpencode-shim pi-opencode-shim
+```
+
+To permit a project tree other than the launch directory, provide a JSON array through `PI_ALLOWED_ROOTS`. Keep this narrow: every child directory is exposed to Pi sessions.
+
+```sh
+PI_CWD=/path/to/project \
+PI_ALLOWED_ROOTS='["/path/to/project"]' \
+bunx --package github:bioshazard/t3-fauxpencode-shim pi-opencode-shim
+```
+
+The GitHub form needs no CI build: Bun installs the repository and executes the TypeScript CLI. For a stable public interface, publish the same package to npm (after removing `private: true`) and users can instead run `bunx pi-opencode-shim`. Pin a Git commit or npm version for reproducible use.
+
 ## Commands
 
 ```sh

@@ -1,7 +1,7 @@
 // T3's project event stream is the best available signal for a cwd-less
 // session-create request. Real OpenCode never needs this because it runs
 // inside the project; this tracker remembers recent event-stream sightings so
-// session creation can fall back to the active project instead of PI_CWD.
+// session creation can use the active project without defaulting to PI_CWD.
 
 const DEFAULT_WINDOW_MS = 30_000;
 

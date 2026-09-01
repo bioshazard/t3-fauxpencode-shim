@@ -23,16 +23,16 @@ The deployed entrypoint uses `PiSessionBackend`; tests use an injectable, determ
 
 ## Session directory tracking (shim extension)
 
-Real OpenCode runs inside the project, so its server cwd is the project directory and T3 sends `POST /session` without a `cwd` field. This shim is launched from a fixed location, so it extends the contract: it tracks the `directory` query parameter on the selected project's `GET /event` stream and, when `POST /session` omits `cwd`, falls back to the most recently seen event-stream directory instead of `PI_CWD`. Sightings expire after 30 seconds so stale project parameters cannot claim new sessions; with no recent sighting the fallback remains `PI_CWD`. Tracked directories pass the same `PI_ALLOWED_ROOTS` gate as explicit cwds; out-of-root signals are ignored. An explicit `cwd` in the request body always wins.
+Real OpenCode runs inside the project, so its server cwd is the project directory and T3 sends `POST /session` without a `cwd` field. This shim is launched from a fixed location, so it extends the contract: it tracks the `directory` query parameter on the selected project's `GET /event` stream and uses the most recently seen allowed project directory when `POST /session` omits `cwd`. Sightings expire after 30 seconds. Without a recent allowed project signal, a cwd-less request fails with `409 cwd_required`; it never falls back to `PI_CWD`. Tracked directories pass the same `PI_ALLOWED_ROOTS` gate as explicit cwds; out-of-root signals are ignored. An explicit `cwd` in the request body always wins.
 
 Configuration:
 
 - `PI_AGENT_DIR`: Pi config/resources directory.
 - `PI_SESSION_DIR`: optional shared Pi JSONL session directory.
-- `PI_CWD`: default session working directory.
-- `PI_ALLOWED_ROOTS`: JSON array of allowed session roots (or `{"roots":[...]}`); defaults to `PI_CWD`.
+- `PI_CWD`: shim working directory for Pi resource discovery; it is not a session-creation fallback.
+- `PI_ALLOWED_ROOTS`: JSON array of allowed session roots (or `{"roots":[...]}`); defaults to `PI_CWD`. Set this in the launch environment; the PM2 ecosystem file passes it through unchanged.
 
-For the local PM2 stack, edit `PI_ALLOWED_ROOTS` in `ecosystem.config.cjs`, then run `bunx pm2@7.0.4 restart pi-opencode-shim --update-env`. Every added workspace root must already exist; sessions outside this allow list are rejected.
+For the local PM2 stack, export `PI_ALLOWED_ROOTS` before starting or restarting it, then run `bunx pm2@7.0.4 restart pi-opencode-shim --update-env`. With no environment value, PM2 permits only the shim checkout, discovered from `ecosystem.config.cjs`. Every added workspace root must already exist; sessions outside this allow list are rejected.
 
 - `PI_OPENCODE_HOST` / `PI_OPENCODE_PORT`: listener address.
 - `PI_PROVIDER` / `PI_MODEL`: provider discovery presentation values; Pi still resolves runtime model/auth through its native configuration.

@@ -2,6 +2,9 @@
   "name": "pi-opencode-shim",
   "version": "0.1.0",
   "private": true,
+  "bin": {
+    "pi-opencode-shim": "./src/cli.ts"
+  },
   "type": "module",
   "scripts": {
     "dev": "bun run src/server.ts",

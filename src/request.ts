@@ -5,6 +5,7 @@ type JsonObject = { readonly [key: string]: JsonValue };
 
 export type CreateSessionRequest =
   | { readonly kind: "error"; readonly message: string }
+  | { readonly kind: "missing_cwd" }
   | {
       readonly input: Omit<CreateSessionInput, "id"> & { readonly id?: string };
       readonly kind: "ok";
@@ -66,11 +67,13 @@ function dataUrlImage(record: JsonObject): PromptImage | null {
 
 export async function readCreateSessionRequest(
   request: Request,
-  fallbackCwd: string
+  activeDirectory: string | null
 ): Promise<CreateSessionRequest> {
   const body = await request.text();
   if (body.trim().length === 0)
-    return { input: { cwd: fallbackCwd }, kind: "ok" };
+    return activeDirectory === null
+      ? { kind: "missing_cwd" }
+      : { input: { cwd: activeDirectory }, kind: "ok" };
 
   let parsed: JsonValue;
   try {
@@ -98,9 +101,21 @@ export async function readCreateSessionRequest(
         "`cwd`, `id`, and `title` must be strings; `permission` must be an array when provided.",
     };
   }
+  if (cwd === undefined) {
+    if (activeDirectory === null) return { kind: "missing_cwd" };
+    return {
+      input: {
+        cwd: activeDirectory,
+        ...(id === undefined ? {} : { id }),
+        ...(permission === undefined ? {} : { permission }),
+        ...(title === undefined ? {} : { title }),
+      },
+      kind: "ok",
+    };
+  }
   return {
     input: {
-      ...(cwd === undefined ? { cwd: fallbackCwd } : { cwd }),
+      cwd,
       ...(id === undefined ? {} : { id }),
       ...(permission === undefined ? {} : { permission }),
       ...(title === undefined ? {} : { title }),
