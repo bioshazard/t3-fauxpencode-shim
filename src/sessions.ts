@@ -329,12 +329,16 @@ export class InMemorySessionBackend implements SessionBackend {
   }
 }
 
-class PiBackendSession implements BackendSession {
+export class PiBackendSession implements BackendSession {
   private readonly created: number;
+  private readonly eventMessageIds = new Map<string, string>();
   private readonly messageIdOverrides = new Map<AgentMessage, string>();
   private readonly persistedMessageEntryIds = new Set<string>();
+  private readonly unsubscribeEvents: () => void;
   private activeEmit: SessionEventSink | undefined;
   private abortRequested = false;
+  private eventEmit: SessionEventSink | undefined;
+  private promptMessageId: string | undefined;
   private promptTail: Promise<void> = Promise.resolve();
   private status: SessionStatus = "idle";
 
@@ -349,6 +353,9 @@ class PiBackendSession implements BackendSession {
     const header = session.sessionManager.getHeader();
     this.created = header === null ? now() : Date.parse(header.timestamp);
     this.restoreMessageIdOverrides();
+    this.unsubscribeEvents = this.session.subscribe((event) =>
+      this.relayEvent(event)
+    );
   }
 
   private restoreMessageIdOverrides(): void {
@@ -387,6 +394,28 @@ class PiBackendSession implements BackendSession {
     };
   }
 
+  private relayEvent(event: AgentSessionEvent): void {
+    if (
+      this.promptMessageId !== undefined &&
+      (event.type === "message_start" || event.type === "message_end") &&
+      event.message.role === "user"
+    ) {
+      this.messageIdOverrides.set(event.message, this.promptMessageId);
+    }
+    const emit = this.eventEmit;
+    if (emit === undefined) return;
+    for (const translated of translateAgentEvent(
+      this.id,
+      event,
+      this.session.messages,
+      this.eventMessageIds,
+      this.messageIdOverrides,
+      this.currentIdentity()
+    )) {
+      emit(translated);
+    }
+  }
+
   snapshot(): SessionSnapshot {
     return {
       cwd: this.cwd,
@@ -408,6 +437,7 @@ class PiBackendSession implements BackendSession {
     emit: SessionEventSink
   ): Promise<SessionSnapshot> {
     const normalized = normalizePromptInput(input);
+    this.eventEmit = emit;
     const operation = this.promptTail.then(() =>
       this.runPrompt(normalized, emit)
     );
@@ -432,6 +462,7 @@ class PiBackendSession implements BackendSession {
     }
     this.status = "running";
     this.activeEmit = emit;
+    this.promptMessageId = input.messageId;
     const promptMessageIndex = this.session.messages.length;
     const rememberPromptMessage = (): void => {
       if (input.messageId === undefined) return;
@@ -459,26 +490,6 @@ class PiBackendSession implements BackendSession {
       }
     };
     emitStatus(this.id, this.status, emit);
-    const messageIds = new Map<string, string>();
-    const unsubscribe = this.session.subscribe((event: AgentSessionEvent) => {
-      if (
-        input.messageId !== undefined &&
-        (event.type === "message_start" || event.type === "message_end") &&
-        event.message.role === "user"
-      ) {
-        this.messageIdOverrides.set(event.message, input.messageId);
-      }
-      for (const translated of translateAgentEvent(
-        this.id,
-        event,
-        this.session.messages,
-        messageIds,
-        this.messageIdOverrides,
-        this.currentIdentity()
-      )) {
-        emit(translated);
-      }
-    });
     try {
       if (input.model !== undefined) {
         const model = this.session.modelRuntime.getModel(
@@ -517,7 +528,7 @@ class PiBackendSession implements BackendSession {
       throw error;
     } finally {
       rememberPromptMessage();
-      unsubscribe();
+      this.promptMessageId = undefined;
       if (this.activeEmit === emit) this.activeEmit = undefined;
     }
   }
@@ -559,6 +570,8 @@ class PiBackendSession implements BackendSession {
   }
 
   dispose(): void {
+    this.unsubscribeEvents();
+    this.eventEmit = undefined;
     this.session.dispose();
   }
 }

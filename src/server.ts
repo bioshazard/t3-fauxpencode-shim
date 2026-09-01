@@ -1,3 +1,11 @@
+import { readFile } from "node:fs/promises";
+
+import {
+  DefaultResourceLoader,
+  getAgentDir,
+  SettingsManager,
+} from "@earendil-works/pi-coding-agent";
+
 import { ActiveDirectoryTracker } from "./active-directory.ts";
 import { canonicalAllowedCwd, loadConfig, normalizeConfig } from "./config.ts";
 import { contractError } from "./contract.ts";
@@ -67,6 +75,33 @@ function isAssistantMessageEntry(entry: { readonly info: JsonValue }): boolean {
   return info.role === "assistant";
 }
 
+async function discoverPiSkills(
+  config: ShimConfig
+): Promise<readonly JsonValue[]> {
+  const agentDir = config.agentDir ?? getAgentDir();
+  const loader = new DefaultResourceLoader({
+    agentDir,
+    cwd: config.cwd,
+    settingsManager: SettingsManager.create(config.cwd, agentDir),
+  });
+  await loader.reload();
+  const skills = loader.getSkills().skills;
+  return Promise.all(
+    skills.map(async (skill) => {
+      try {
+        return {
+          content: await readFile(skill.filePath, "utf8"),
+          description: skill.description,
+          location: skill.filePath,
+          name: skill.name,
+        };
+      } catch {
+        return null;
+      }
+    })
+  ).then((items) => items.filter((item) => item !== null));
+}
+
 export function createHandler(
   config: ShimConfig,
   sessions = new SessionRegistry(new InMemorySessionBackend()),
@@ -87,6 +122,7 @@ function createSessionHandler(
   sessions: SessionRegistry,
   events: EventHub
 ): (request: Request) => Response | Promise<Response> {
+  const piSkillDiscovery = discoverPiSkills(config);
   // T3 omits cwd on POST /session. Its project event stream is the strongest
   // available directory signal, so use only that stream rather than unrelated
   // background discovery requests from other projects.
@@ -121,12 +157,16 @@ function createSessionHandler(
 
     if (
       url.pathname === "/agent" ||
-      url.pathname === "/skill" ||
       url.pathname === "/permission" ||
       url.pathname === "/question"
     ) {
       if (request.method !== "GET") return methodNotAllowed(request);
       return jsonResponse([]);
+    }
+
+    if (url.pathname === "/skill") {
+      if (request.method !== "GET") return methodNotAllowed(request);
+      return piSkillDiscovery.then((skills) => jsonResponse(skills));
     }
 
     if (url.pathname === "/global/event" || url.pathname === "/event") {

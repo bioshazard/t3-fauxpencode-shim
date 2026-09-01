@@ -80,14 +80,14 @@ describe("health and discovery", () => {
     ).toMatchObject({ id: "test-model", name: "test-model", providerID: "pi" });
   });
 
-  test("exposes empty optional discovery lists", async () => {
+  test("exposes agents and Pi-loaded skills", async () => {
     const agents = await request("/agent");
     const skills = await request("/skill");
 
     expect(agents.status).toBe(200);
     expect(skills.status).toBe(200);
     expect(await agents.json()).toEqual([]);
-    expect(await skills.json()).toEqual([]);
+    expect(await skills.json()).toEqual(expect.any(Array));
   });
 
   test("exposes empty pending interaction lists", async () => {
