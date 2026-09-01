@@ -6,8 +6,8 @@ import type { ShimConfig } from "../src/types.ts";
 
 const config: ShimConfig = {
   agentDir: undefined,
-  allowedRoots: ["/tmp"],
-  cwd: "/tmp/poc",
+  allowedRoots: [process.cwd()],
+  cwd: process.cwd(),
   host: "127.0.0.1",
   modelId: "test-model",
   port: 4096,

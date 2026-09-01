@@ -14,8 +14,8 @@ describe("Pi session backend", () => {
     const sessionDir = `/tmp/pi-opencode-shim-test-${crypto.randomUUID()}`;
     const config: ShimConfig = {
       agentDir: undefined,
-      allowedRoots: ["/tmp"],
-      cwd: "/tmp/pi-poc",
+      allowedRoots: [process.cwd()],
+      cwd: process.cwd(),
       host: "127.0.0.1",
       modelId: "configured",
       port: 4096,
