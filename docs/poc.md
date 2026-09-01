@@ -40,4 +40,4 @@ Start the shim, then launch T3 with an isolated shim-only state directory:
 PI_OPENCODE_URL=http://127.0.0.1:41874 bun run t3:shim
 ```
 
-The command writes `artifacts/t3-shim-home/userdata/settings.json`, disables Codex and Claude, enables OpenCode, and starts the pinned local T3 checkout. Set `T3_ROOT` for another checkout or `T3_HOME` for another disposable state directory. The settings file is deliberately rewritten on every launch.
+The command writes `artifacts/t3-shim-home/userdata/settings.json`, disables Codex and Claude, enables OpenCode, and sets T3 text generation to `opencode/configured`. It starts the pinned local T3 checkout. Set `T3_ROOT` for another checkout or `T3_HOME` for another disposable state directory. The settings file is deliberately rewritten on every launch.

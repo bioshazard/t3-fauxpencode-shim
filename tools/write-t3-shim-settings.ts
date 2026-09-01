@@ -32,6 +32,11 @@ export function writeT3ShimSettings(home: string, serverUrl: string): string {
           codex: { enabled: false },
           opencode: { enabled: true, serverUrl: shimUrl(serverUrl) },
         },
+        textGenerationModelSelection: {
+          instanceId: "opencode",
+          model: "configured",
+          options: [],
+        },
       },
       null,
       2

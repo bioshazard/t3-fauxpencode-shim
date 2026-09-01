@@ -16,6 +16,11 @@ test("writes an isolated T3 shim-only provider configuration", () => {
         codex: { enabled: false },
         opencode: { enabled: true, serverUrl: "http://127.0.0.1:41874" },
       },
+      textGenerationModelSelection: {
+        instanceId: "opencode",
+        model: "configured",
+        options: [],
+      },
     });
   } finally {
     rmSync(home, { force: true, recursive: true });
