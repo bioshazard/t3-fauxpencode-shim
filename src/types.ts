@@ -140,7 +140,7 @@ export interface EventProperties {
   readonly isError?: boolean;
   readonly message?: FacadeMessage;
   readonly messageId?: string;
-  readonly part?: OpenCodeTextPart;
+  readonly part?: OpenCodePart;
   readonly sessionID?: string;
   readonly sessionStatus?: SessionStatus;
   readonly status?: OpenCodeSessionStatus;
@@ -188,6 +188,18 @@ export interface OpenCodeTextPart {
   readonly time: { readonly end?: number; readonly start: number };
   readonly type: "text" | "reasoning";
 }
+
+export interface OpenCodeToolPart {
+  readonly callID: string;
+  readonly id: string;
+  readonly messageID: string;
+  readonly sessionID: string;
+  readonly state: JsonValue;
+  readonly tool: string;
+  readonly type: "tool";
+}
+
+export type OpenCodePart = OpenCodeTextPart | OpenCodeToolPart;
 
 export type OpenCodeSessionStatus =
   | { readonly type: "busy" }

@@ -125,4 +125,43 @@ describe("Pi message ID translation", () => {
     expect(assistantEnd[0]?.properties.info?.id).toBe("thread-message-2");
     expect(idle[0]?.properties.status).toEqual({ type: "idle" });
   });
+
+  test("emits final tool parts without exposing partial tool JSON as text", () => {
+    const assistant: AssistantMessage = {
+      content: [
+        {
+          arguments: { command: "ls" },
+          id: "call_ls",
+          name: "bash",
+          type: "toolCall",
+        },
+      ],
+      role: "assistant",
+      timestamp: 2,
+    } as unknown as AssistantMessage;
+    const translated = (event: AgentSessionEvent) =>
+      translateAgentEvent("thread", event, [assistant]);
+
+    expect(
+      translated({
+        assistantMessageEvent: {
+          contentIndex: 0,
+          delta: '{"command":"ls"}',
+          partial: assistant,
+          type: "toolcall_delta",
+        },
+        message: assistant,
+        type: "message_update",
+      })
+    ).toEqual([]);
+
+    const completed = translated({ type: "message_end", message: assistant });
+    expect(completed).toHaveLength(2);
+    expect(completed[1]?.properties.part).toMatchObject({
+      callID: "call_ls",
+      state: { input: { command: "ls" }, status: "pending" },
+      tool: "bash",
+      type: "tool",
+    });
+  });
 });

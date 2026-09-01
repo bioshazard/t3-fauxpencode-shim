@@ -12,6 +12,7 @@ import type {
   FacadePart,
   JsonValue,
   OpenCodeMessageInfo,
+  OpenCodePart,
   OpenCodeTextPart,
   SessionStatus,
 } from "./types.ts";
@@ -213,6 +214,78 @@ function messagePartUpdatedEvent(
   });
 }
 
+function toolPartUpdatedEvent(
+  sessionID: string,
+  message: FacadeMessage,
+  part: Extract<FacadePart, { readonly type: "tool-call" | "tool-result" }>,
+  contentIndex: number
+): FacadeEvent {
+  const base = {
+    id: `${message.id}-part-${contentIndex + 1}`,
+    messageID: message.id,
+    sessionID,
+  };
+  const toolPart: OpenCodePart =
+    part.type === "tool-call"
+      ? {
+          ...base,
+          callID: part.id,
+          state: {
+            input: part.input,
+            raw: JSON.stringify(part.input),
+            status: "pending",
+          },
+          tool: part.name,
+          type: "tool",
+        }
+      : {
+          ...base,
+          callID: part.toolCallId,
+          state: {
+            input: {},
+            metadata: {},
+            output: part.text,
+            status: part.error ? "error" : "completed",
+            ...(part.error ? { error: part.text } : { title: "completed" }),
+            time: {
+              end: message.time.completed ?? message.time.created,
+              start: message.time.created,
+            },
+          },
+          tool: part.name,
+          type: "tool",
+        };
+  return sessionEvent(sessionID, "message.part.updated", {
+    part: toolPart,
+    time: message.time.completed ?? message.time.created,
+  });
+}
+
+function completedMessagePartEvents(
+  sessionID: string,
+  message: FacadeMessage
+): readonly FacadeEvent[] {
+  if (message.role === "user") return [];
+  return message.parts.flatMap((part, contentIndex) => {
+    if (part.type === "tool-call" || part.type === "tool-result") {
+      return [toolPartUpdatedEvent(sessionID, message, part, contentIndex)];
+    }
+    if (part.type === "text" || part.type === "reasoning") {
+      return [
+        messagePartUpdatedEvent(
+          sessionID,
+          message.id,
+          contentIndex,
+          part.type,
+          part.text,
+          message.time.created
+        ),
+      ];
+    }
+    return [];
+  });
+}
+
 function eventMessageId(
   sessionID: string,
   message: AgentMessage,
@@ -269,11 +342,7 @@ export function translateAgentEvent(
     }
     case "message_update": {
       const update = event.assistantMessageEvent;
-      if (
-        update.type !== "text_delta" &&
-        update.type !== "thinking_delta" &&
-        update.type !== "toolcall_delta"
-      ) {
+      if (update.type !== "text_delta" && update.type !== "thinking_delta") {
         return [];
       }
       const messageID = eventMessageId(
@@ -319,6 +388,10 @@ export function translateAgentEvent(
           sessionID,
           messageId === undefined ? message : { ...message, id: messageId },
           identity
+        ),
+        ...completedMessagePartEvents(
+          sessionID,
+          messageId === undefined ? message : { ...message, id: messageId }
         ),
       ];
     }
