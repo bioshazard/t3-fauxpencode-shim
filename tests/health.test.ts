@@ -24,18 +24,20 @@ describe("health and discovery", () => {
     expect(loadConfig({}).version).toBe("1.14.19");
   });
 
-  test("loads allowed roots from JSON configuration", () => {
+  test("loads allowed roots from comma-separated configuration", () => {
     expect(
       loadConfig({
-        PI_ALLOWED_ROOTS: JSON.stringify({ roots: ["/tmp/projects"] }),
+        PI_ALLOWED_ROOTS: "/tmp/projects, /tmp/other-project",
         PI_CWD: "/tmp",
       }).allowedRoots
-    ).toEqual(["/tmp/projects"]);
+    ).toEqual(["/tmp/projects", "/tmp/other-project"]);
   });
 
-  test("rejects malformed allowed roots configuration", () => {
-    expect(() => loadConfig({ PI_ALLOWED_ROOTS: "not-json" })).toThrow(
-      "PI_ALLOWED_ROOTS must be valid JSON."
+  test("rejects empty allowed root entries", () => {
+    expect(() =>
+      loadConfig({ PI_ALLOWED_ROOTS: "/tmp/projects,,/tmp/other" })
+    ).toThrow(
+      "PI_ALLOWED_ROOTS must be a comma-separated list of directory paths."
     );
   });
 

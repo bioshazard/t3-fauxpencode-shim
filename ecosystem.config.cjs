@@ -1,5 +1,5 @@
 const repoDir = __dirname;
-const allowedRoots = process.env.PI_ALLOWED_ROOTS ?? JSON.stringify([repoDir]);
+const allowedRoots = process.env.PI_ALLOWED_ROOTS ?? repoDir;
 module.exports = {
   apps: [
     {

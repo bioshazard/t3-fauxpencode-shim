@@ -15,29 +15,13 @@ function configuredRoots(
   cwd: string
 ): readonly string[] {
   if (value === undefined || value.trim().length === 0) return [cwd];
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(value);
-  } catch {
-    throw new Error("PI_ALLOWED_ROOTS must be valid JSON.");
-  }
-  const roots = Array.isArray(parsed)
-    ? parsed
-    : Object.prototype.toString.call(parsed) === "[object Object]" &&
-        Array.isArray((parsed as { readonly roots?: unknown }).roots)
-      ? (parsed as { readonly roots: unknown[] }).roots
-      : null;
-  if (
-    roots === null ||
-    roots.some(
-      (root) => Object.prototype.toString.call(root) !== "[object String]"
-    )
-  ) {
+  const roots = value.split(",").map((root) => root.trim());
+  if (roots.some((root) => root.length === 0)) {
     throw new Error(
-      "PI_ALLOWED_ROOTS must be a JSON array of directory path strings."
+      "PI_ALLOWED_ROOTS must be a comma-separated list of directory paths."
     );
   }
-  return roots.map((root) => String(root));
+  return roots;
 }
 
 function canonicalPath(value: string): string | null {
