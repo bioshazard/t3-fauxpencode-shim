@@ -103,6 +103,7 @@ function translateMessage(
     parts: [
       {
         error: message.isError,
+        name: message.toolName,
         text: translateToolResultContent(message.content),
         toolCallId: message.toolCallId,
         type: "tool-result",

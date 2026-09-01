@@ -105,6 +105,7 @@ export type FacadePart =
   | {
       readonly type: "tool-result";
       readonly error: boolean;
+      readonly name: string;
       readonly text: string;
       readonly toolCallId: string;
     };

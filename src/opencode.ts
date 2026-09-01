@@ -147,7 +147,7 @@ function toOpenCodePart(
         start: message.time.created,
       },
     },
-    tool: part.toolCallId,
+    tool: part.name,
     type: "tool",
   };
 }

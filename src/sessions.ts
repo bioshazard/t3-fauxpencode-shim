@@ -181,6 +181,7 @@ class MemoryBackendSession implements BackendSession {
         parts: [
           {
             error: false,
+            name: toolName,
             text: `${toolName} ok`,
             toolCallId,
             type: "tool-result",

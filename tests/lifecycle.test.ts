@@ -113,6 +113,14 @@ describe("prompt and lifecycle facade", () => {
     );
     const historyBody = await history.json();
     expect(historyBody).toHaveLength(2);
+    expect(historyBody[1].parts).toContainEqual(
+      expect.objectContaining({
+        callID: "thread-tools-tool-1",
+        state: expect.objectContaining({ status: "completed" }),
+        tool: "list_files",
+        type: "tool",
+      })
+    );
     const assistantId = historyBody[1].info.id;
     const lookup = await handler(
       new Request(
