@@ -11,4 +11,4 @@ if [[ ! -f "$t3_root/package.json" ]]; then
 fi
 
 T3_HOME="$t3_home" bun "$repo_dir/tools/write-t3-shim-settings.ts"
-exec pnpm --dir "$t3_root" run dev -- --home-dir "$t3_home"
+exec pnpm --dir "$t3_root" run dev --home-dir "$t3_home"
