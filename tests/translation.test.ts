@@ -164,4 +164,48 @@ describe("Pi message ID translation", () => {
       type: "tool",
     });
   });
+
+  test("updates the original tool part with its result", () => {
+    const assistant: AssistantMessage = {
+      content: [
+        {
+          arguments: { command: "ls" },
+          id: "call_ls",
+          name: "bash",
+          type: "toolCall",
+        },
+      ],
+      role: "assistant",
+      timestamp: 2,
+    } as unknown as AssistantMessage;
+    const result = {
+      content: [{ text: "README.md", type: "text" }],
+      isError: false,
+      role: "toolResult",
+      timestamp: 3,
+      toolCallId: "call_ls",
+      toolName: "bash",
+    } as unknown as AgentMessage;
+    const messages = [assistant, result];
+
+    const translated = translateAgentEvent(
+      "thread",
+      { message: result, type: "message_end" } as AgentSessionEvent,
+      messages
+    );
+
+    expect(translated).toHaveLength(1);
+    expect(translated[0]?.properties.part).toMatchObject({
+      callID: "call_ls",
+      id: "thread-message-1-part-1",
+      messageID: "thread-message-1",
+      state: {
+        input: { command: "ls" },
+        output: "README.md",
+        status: "completed",
+      },
+      tool: "bash",
+      type: "tool",
+    });
+  });
 });

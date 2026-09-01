@@ -218,11 +218,13 @@ function toolPartUpdatedEvent(
   sessionID: string,
   message: FacadeMessage,
   part: Extract<FacadePart, { readonly type: "tool-call" | "tool-result" }>,
-  contentIndex: number
+  contentIndex: number,
+  messageID: string = message.id,
+  input: JsonValue = {}
 ): FacadeEvent {
   const base = {
-    id: `${message.id}-part-${contentIndex + 1}`,
-    messageID: message.id,
+    id: `${messageID}-part-${contentIndex + 1}`,
+    messageID,
     sessionID,
   };
   const toolPart: OpenCodePart =
@@ -242,7 +244,8 @@ function toolPartUpdatedEvent(
           ...base,
           callID: part.toolCallId,
           state: {
-            input: {},
+            input,
+            raw: JSON.stringify(input),
             metadata: {},
             output: part.text,
             status: part.error ? "error" : "completed",
@@ -259,6 +262,37 @@ function toolPartUpdatedEvent(
     part: toolPart,
     time: message.time.completed ?? message.time.created,
   });
+}
+
+function toolCallOrigin(
+  sessionID: string,
+  result: ToolResultMessage,
+  messages: readonly AgentMessage[],
+  messageIdOverrides: ReadonlyMap<AgentMessage, string>
+):
+  | {
+      readonly contentIndex: number;
+      readonly input: JsonValue;
+      readonly messageID: string;
+    }
+  | undefined {
+  for (let index = messages.indexOf(result) - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.role !== "assistant") continue;
+    const contentIndex = message.content.findIndex(
+      (part) => part.type === "toolCall" && part.id === result.toolCallId
+    );
+    if (contentIndex < 0) continue;
+    const part = message.content[contentIndex];
+    if (part === undefined || part.type !== "toolCall") continue;
+    return {
+      contentIndex,
+      input: part.arguments as JsonValue,
+      messageID:
+        messageIdOverrides.get(message) ?? `${sessionID}-message-${index + 1}`,
+    };
+  }
+  return undefined;
 }
 
 function completedMessagePartEvents(
@@ -330,6 +364,7 @@ export function translateAgentEvent(
     case "agent_end":
       return [statusEvent(sessionID, event.willRetry ? "running" : "idle")];
     case "message_start": {
+      if (event.message.role === "toolResult") return [];
       const message = translateMessage(
         sessionID,
         messages.indexOf(event.message),
@@ -369,6 +404,40 @@ export function translateAgentEvent(
       ];
     }
     case "message_end": {
+      if (event.message.role === "toolResult") {
+        const result = translateMessage(
+          sessionID,
+          messages.indexOf(event.message),
+          event.message,
+          messageIdOverrides
+        );
+        const origin = toolCallOrigin(
+          sessionID,
+          event.message,
+          messages,
+          messageIdOverrides
+        );
+        const part = result?.parts[0];
+        if (
+          result === null ||
+          result === undefined ||
+          origin === undefined ||
+          part === undefined ||
+          part.type !== "tool-result"
+        ) {
+          return [];
+        }
+        return [
+          toolPartUpdatedEvent(
+            sessionID,
+            result,
+            part,
+            origin.contentIndex,
+            origin.messageID,
+            origin.input
+          ),
+        ];
+      }
       const messageId = eventMessageId(
         sessionID,
         event.message,

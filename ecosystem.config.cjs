@@ -1,4 +1,5 @@
 const repoDir = __dirname;
+const barrelHoardDir = "/Users/bios/workspaces/dev/barrel-hoard-js";
 
 module.exports = {
   apps: [
@@ -10,7 +11,7 @@ module.exports = {
       script: "bun",
       watch: false,
       env: {
-        PI_ALLOWED_ROOTS: JSON.stringify([repoDir]),
+        PI_ALLOWED_ROOTS: JSON.stringify([repoDir, barrelHoardDir]),
         PI_CWD: repoDir,
         PI_OPENCODE_HOST: "127.0.0.1",
         PI_OPENCODE_PORT: "41874",
