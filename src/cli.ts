@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 import { loadConfig } from "./config.ts";
@@ -15,7 +16,7 @@ function usage(): string {
     "Usage: pi-opencode-shim [--with-t3] [--t3-home <directory>]",
     "",
     "  --with-t3                 Start an isolated T3 worker with shim settings.",
-    "  --t3-home <directory>     T3 settings directory (default: <PI_CWD>/.pi-opencode-shim/t3-home).",
+    "  --t3-home <directory>     T3 settings directory (default: $TMPDIR/pi-opencode-shim-t3-home).",
   ].join("\n");
 }
 
@@ -45,8 +46,8 @@ export function parseCliOptions(args: readonly string[]): CliOptions {
   return { t3Home, withT3 };
 }
 
-export function defaultT3Home(cwd: string): string {
-  return join(cwd, ".pi-opencode-shim", "t3-home");
+export function defaultT3Home(): string {
+  return join(tmpdir(), "pi-opencode-shim-t3-home");
 }
 
 export async function runCli(args = Bun.argv.slice(2)): Promise<void> {
@@ -65,7 +66,7 @@ export async function runCli(args = Bun.argv.slice(2)): Promise<void> {
     server.stop(true);
   };
   const packageRoot = resolve(import.meta.dir, "..");
-  const t3Home = resolve(options.t3Home ?? defaultT3Home(config.cwd));
+  const t3Home = resolve(options.t3Home ?? defaultT3Home());
   try {
     const worker = Bun.spawn({
       cmd: ["bash", resolve(packageRoot, "tools", "run-t3-shim.sh")],

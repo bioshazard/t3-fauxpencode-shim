@@ -20,7 +20,7 @@ PI_ALLOWED_ROOTS=/path/to/project,/path/to/another-project \
 bunx --bun --package github:bioshazard/t3-fauxpencode-shim pi-opencode-shim
 ```
 
-Append `--with-t3` to start an isolated local T3 worker with shim settings already applied. Its state lives at `<PI_CWD>/.pi-opencode-shim/t3-home`; use `--t3-home <directory>` to choose another location.
+Append `--with-t3` to start an isolated local T3 worker with shim settings already applied. Its state lives at `$TMPDIR/pi-opencode-shim-t3-home`; use `--t3-home <directory>` to choose another location.
 
 The GitHub form needs no CI build: Bun installs the repository and executes the TypeScript CLI. For a stable public interface, publish the same package to npm (after removing `private: true`) and users can instead run `bunx pi-opencode-shim`. Pin a Git commit or npm version for reproducible use.
 

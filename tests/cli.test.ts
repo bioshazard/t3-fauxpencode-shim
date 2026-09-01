@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { defaultT3Home, parseCliOptions } from "../src/cli.ts";
 
@@ -12,10 +14,8 @@ describe("CLI options", () => {
     );
   });
 
-  test("uses an isolated T3 home beneath the configured cwd", () => {
-    expect(defaultT3Home("/tmp/project")).toBe(
-      "/tmp/project/.pi-opencode-shim/t3-home"
-    );
+  test("uses an isolated T3 home under the system temp directory", () => {
+    expect(defaultT3Home()).toBe(join(tmpdir(), "pi-opencode-shim-t3-home"));
   });
 
   test("rejects incomplete or unknown options", () => {
