@@ -22,7 +22,7 @@ export type WorkerCliOptions = {
 
 function usage(): string {
   return [
-    "Usage: t3-worker <command> [options]",
+    "Usage: t3-fauxpencode <command> [options]",
     "",
     "Commands: start, stop, restart, status, logs",
     "",

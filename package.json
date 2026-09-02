@@ -1,9 +1,9 @@
 {
-  "name": "@bioshazard/t3-worker",
+  "name": "t3-fauxpencode",
   "version": "0.1.0",
   "private": false,
   "bin": {
-    "t3-worker": "./src/cli.ts"
+    "t3-fauxpencode": "./src/cli.ts"
   },
   "type": "module",
   "scripts": {

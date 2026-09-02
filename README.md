@@ -1,4 +1,4 @@
-# T3 Worker
+# T3 Fauxpencode
 
 See [`docs/poc.md`](docs/poc.md) for the provisional facade surface and known capture gaps. See [`docs/runbook.md`](docs/runbook.md) for capture, scenario, and verification commands.
 
@@ -9,17 +9,17 @@ Single-machine Bun launcher for an isolated T3 worker backed by Pi sessions. It 
 Run it from the project directory T3 will use. The current directory is the one permitted session root; there are no repo or worker-name flags.
 
 ```sh
-bunx @bioshazard/t3-worker start
+bunx t3-fauxpencode start
 ```
 
-The launcher stores its singleton state under `~/.local/share/t3-worker/` (override only for testing with `T3_WORKER_HOME`). It starts PM2-managed shim and T3 processes. The T3 settings are isolated from a normal T3 installation.
+The launcher stores its singleton state under `~/.local/share/t3-fauxpencode/` (override only for testing with `T3_WORKER_HOME`). It starts PM2-managed shim and T3 processes. The T3 settings are isolated from a normal T3 installation.
 
 ## FRP
 
 Pass a complete client configuration on the first start:
 
 ```sh
-bunx @bioshazard/t3-worker start --frpc-config ~/frpc.toml
+bunx t3-fauxpencode start --frpc-config ~/frpc.toml
 ```
 
 The config is copied to the worker state directory and enables a third PM2 process. On its first use, the launcher downloads the matching official `frpc` binary for macOS/Linux `amd64` or `arm64`.
@@ -43,14 +43,29 @@ Use your FRP server's normal authentication settings in that same TOML; do not p
 ## Lifecycle
 
 ```sh
-bunx @bioshazard/t3-worker start
-bunx @bioshazard/t3-worker stop
-bunx @bioshazard/t3-worker restart
-bunx @bioshazard/t3-worker status
-bunx @bioshazard/t3-worker logs
+bunx t3-fauxpencode start
+bunx t3-fauxpencode stop
+bunx t3-fauxpencode restart
+bunx t3-fauxpencode status
+bunx t3-fauxpencode logs
 ```
 
-Publish the package to npm for the `bunx @bioshazard/t3-worker` form. Until publication, use Bun's GitHub package form from this repository and pin a commit for reproducibility.
+Publish the package to npm for the `bunx t3-fauxpencode` form. The release workflow in [publish.yml](.github/workflows/publish.yml) uses npm trusted publishing after its one-time setup.
+
+### npm publishing
+
+Publish version `0.1.0` once from a trusted local machine, then configure npm to trust this repository's release workflow:
+
+```sh
+npm publish
+npm trust github t3-fauxpencode \
+  --repo <owner>/<repo> \
+  --file publish.yml \
+  --env npm \
+  --allow-publish
+```
+
+Create an `npm` GitHub environment for the repository, then publish future versions by creating a GitHub Release after updating `package.json`'s version. The workflow uses OIDC; it needs no `NPM_TOKEN` secret.
 
 ## Commands
 

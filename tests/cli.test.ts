@@ -20,7 +20,7 @@ describe("CLI options", () => {
 
   test("uses a stable machine-level state directory", () => {
     expect(defaultWorkerHome("/Users/example")).toBe(
-      join("/Users/example", ".local", "share", "t3-worker")
+      join("/Users/example", ".local", "share", "t3-fauxpencode")
     );
   });
 
@@ -34,15 +34,15 @@ describe("CLI options", () => {
   });
 
   test("generates one PM2 stack and adds frpc only with a config", () => {
-    const home = mkdtempSync(join(tmpdir(), "t3-worker-"));
+    const home = mkdtempSync(join(tmpdir(), "t3-fauxpencode-"));
     try {
       const paths = workerPaths(home);
       prepareWorker(paths);
       writeEcosystem(paths, "/project", "/package", paths.frpcConfig);
       const ecosystem = readFileSync(paths.ecosystem, "utf8");
-      expect(ecosystem).toContain('"name": "t3-worker-shim"');
-      expect(ecosystem).toContain('"name": "t3-worker-t3"');
-      expect(ecosystem).toContain('"name": "t3-worker-frpc"');
+      expect(ecosystem).toContain('"name": "t3-fauxpencode-shim"');
+      expect(ecosystem).toContain('"name": "t3-fauxpencode-t3"');
+      expect(ecosystem).toContain('"name": "t3-fauxpencode-frpc"');
       expect(ecosystem).toContain('"PI_ALLOWED_ROOTS": "/project"');
       expect(ecosystem).toContain('"-c",');
     } finally {
@@ -51,7 +51,7 @@ describe("CLI options", () => {
   });
 
   test("accepts only FRP proxies targeting local T3", () => {
-    const home = mkdtempSync(join(tmpdir(), "t3-worker-"));
+    const home = mkdtempSync(join(tmpdir(), "t3-fauxpencode-"));
     try {
       const paths = workerPaths(home);
       prepareWorker(paths);

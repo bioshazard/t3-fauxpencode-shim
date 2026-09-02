@@ -24,7 +24,7 @@ export type WorkerPaths = {
 };
 
 export function defaultWorkerHome(home = homedir()): string {
-  return join(home, ".local", "share", "t3-worker");
+  return join(home, ".local", "share", "t3-fauxpencode");
 }
 
 export function workerPaths(home = defaultWorkerHome()): WorkerPaths {
@@ -166,7 +166,7 @@ export function writeEcosystem(
         PI_SESSION_DIR: paths.piHome,
       },
       exec_interpreter: "none",
-      name: "t3-worker-shim",
+      name: "t3-fauxpencode-shim",
       script: process.execPath,
       watch: false,
     },
@@ -179,7 +179,7 @@ export function writeEcosystem(
         T3_HOME: paths.t3Home,
       },
       exec_interpreter: "none",
-      name: "t3-worker-t3",
+      name: "t3-fauxpencode-t3",
       script: "bash",
       watch: false,
     },
@@ -190,7 +190,7 @@ export function writeEcosystem(
       autorestart: true,
       cwd,
       exec_interpreter: "none",
-      name: "t3-worker-frpc",
+      name: "t3-fauxpencode-frpc",
       script: paths.frpc,
       watch: false,
     });
