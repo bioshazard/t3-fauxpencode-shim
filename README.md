@@ -1,28 +1,56 @@
-# Pi–OpenCode Shim POC
+# T3 Worker
 
 See [`docs/poc.md`](docs/poc.md) for the provisional facade surface and known capture gaps. See [`docs/runbook.md`](docs/runbook.md) for capture, scenario, and verification commands.
 
-Small Bun service exposing the OpenCode-shaped surface needed by the documented T3 integration, backed by Pi sessions.
+Single-machine Bun launcher for an isolated T3 worker backed by Pi sessions. It exposes the OpenCode-shaped surface T3 needs; PM2 and optional FRP are implementation details.
 
 ## Run
 
-Run it in the project directory T3 will use. By default, only that directory is permitted for sessions:
+Run it from the project directory T3 will use. The current directory is the one permitted session root; there are no repo or worker-name flags.
 
 ```sh
-bunx --bun --package github:bioshazard/t3-fauxpencode-shim pi-opencode-shim
+bunx @bioshazard/t3-worker start
 ```
 
-To permit project trees other than the launch directory, provide a comma-separated list through `PI_ALLOWED_ROOTS`. Keep this narrow: every child directory is exposed to Pi sessions.
+The launcher stores its singleton state under `~/.local/share/t3-worker/` (override only for testing with `T3_WORKER_HOME`). It starts PM2-managed shim and T3 processes. The T3 settings are isolated from a normal T3 installation.
+
+## FRP
+
+Pass a complete client configuration on the first start:
 
 ```sh
-PI_CWD=/path/to/project \
-PI_ALLOWED_ROOTS=/path/to/project,/path/to/another-project \
-bunx --bun --package github:bioshazard/t3-fauxpencode-shim pi-opencode-shim
+bunx @bioshazard/t3-worker start --frpc-config ~/frpc.toml
 ```
 
-Append `--with-t3` to start an isolated local T3 worker with shim settings already applied. Its state lives at `$TMPDIR/pi-opencode-shim-t3-home`; use `--t3-home <directory>` to choose another location.
+The config is copied to the worker state directory and enables a third PM2 process. On its first use, the launcher downloads the matching official `frpc` binary for macOS/Linux `amd64` or `arm64`.
 
-The GitHub form needs no CI build: Bun installs the repository and executes the TypeScript CLI. For a stable public interface, publish the same package to npm (after removing `private: true`) and users can instead run `bunx pi-opencode-shim`. Pin a Git commit or npm version for reproducible use.
+FRP must target T3, not the shim:
+
+```toml
+serverAddr = "frp.example.com"
+serverPort = 7000
+
+[[proxies]]
+name = "t3"
+type = "http"
+localIP = "127.0.0.1"
+localPort = 3773
+customDomains = ["home.workers.example.com"]
+```
+
+Use your FRP server's normal authentication settings in that same TOML; do not put its token in a CLI flag.
+
+## Lifecycle
+
+```sh
+bunx @bioshazard/t3-worker start
+bunx @bioshazard/t3-worker stop
+bunx @bioshazard/t3-worker restart
+bunx @bioshazard/t3-worker status
+bunx @bioshazard/t3-worker logs
+```
+
+Publish the package to npm for the `bunx @bioshazard/t3-worker` form. Until publication, use Bun's GitHub package form from this repository and pin a commit for reproducibility.
 
 ## Commands
 

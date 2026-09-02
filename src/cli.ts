@@ -1,53 +1,73 @@
 #!/usr/bin/env bun
 
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
 
-import { loadConfig } from "./config.ts";
-import { runServer } from "./server.ts";
+import {
+  defaultWorkerHome,
+  ensureFrpc,
+  installFrpcConfig,
+  prepareWorker,
+  workerPaths,
+  writeEcosystem,
+} from "./worker.ts";
 
-export type CliOptions = {
-  readonly t3Home?: string;
-  readonly withT3: boolean;
+export { defaultWorkerHome } from "./worker.ts";
+
+export type WorkerCommand = "logs" | "restart" | "start" | "status" | "stop";
+export type WorkerCliOptions = {
+  readonly command: WorkerCommand;
+  readonly frpcConfig?: string;
 };
 
 function usage(): string {
   return [
-    "Usage: pi-opencode-shim [--with-t3] [--t3-home <directory>]",
+    "Usage: t3-worker <command> [options]",
     "",
-    "  --with-t3                 Start an isolated T3 worker with shim settings.",
-    "  --t3-home <directory>     T3 settings directory (default: $TMPDIR/pi-opencode-shim-t3-home).",
+    "Commands: start, stop, restart, status, logs",
+    "",
+    "  --frpc-config <path>      Install this TOML config and run frpc (start only).",
   ].join("\n");
 }
 
-export function parseCliOptions(args: readonly string[]): CliOptions {
-  let t3Home: string | undefined;
-  let withT3 = false;
-  for (let index = 0; index < args.length; index += 1) {
+export function parseWorkerCliOptions(
+  args: readonly string[]
+): WorkerCliOptions {
+  const command = args[0] as WorkerCommand | undefined;
+  if (
+    !command ||
+    !["start", "stop", "restart", "status", "logs"].includes(command)
+  ) {
+    throw new Error(`Unknown command: ${args[0] ?? ""}\n\n${usage()}`);
+  }
+  let frpcConfig: string | undefined;
+  for (let index = 1; index < args.length; index += 1) {
     const argument = args[index];
-    if (argument === "--with-t3") {
-      withT3 = true;
-      continue;
-    }
-    if (argument === "--t3-home") {
+    if (argument === "--frpc-config") {
       const value = args[index + 1];
       if (value === undefined || value.startsWith("-")) {
-        throw new Error("--t3-home requires a directory.");
+        throw new Error("--frpc-config requires a path.");
       }
-      t3Home = value;
+      frpcConfig = value;
       index += 1;
       continue;
     }
     throw new Error(`Unknown argument: ${argument}\n\n${usage()}`);
   }
-  if (t3Home !== undefined && !withT3) {
-    throw new Error("--t3-home requires --with-t3.");
+  if (frpcConfig !== undefined && command !== "start") {
+    throw new Error("--frpc-config requires the start command.");
   }
-  return { t3Home, withT3 };
+  return { command, frpcConfig };
 }
 
-export function defaultT3Home(): string {
-  return join(tmpdir(), "pi-opencode-shim-t3-home");
+async function runPm2(args: readonly string[], pm2Home: string): Promise<void> {
+  const child = Bun.spawn({
+    cmd: ["bunx", "pm2@7.0.4", ...args],
+    env: { ...Bun.env, PM2_HOME: pm2Home },
+    stderr: "inherit",
+    stdout: "inherit",
+  });
+  if ((await child.exited) !== 0) throw new Error("PM2 command failed.");
 }
 
 export async function runCli(args = Bun.argv.slice(2)): Promise<void> {
@@ -55,40 +75,30 @@ export async function runCli(args = Bun.argv.slice(2)): Promise<void> {
     console.log(usage());
     return;
   }
-  const options = parseCliOptions(args);
-  const config = loadConfig();
-  const server = runServer(config);
-  if (!options.withT3) return;
-
-  const controller = new AbortController();
-  const stop = () => {
-    controller.abort();
-    server.stop(true);
-  };
+  const options = parseWorkerCliOptions(args);
+  const paths = workerPaths(Bun.env.T3_WORKER_HOME ?? defaultWorkerHome());
   const packageRoot = resolve(import.meta.dir, "..");
-  const t3Home = resolve(options.t3Home ?? defaultT3Home());
-  try {
-    const worker = Bun.spawn({
-      cmd: ["bash", resolve(packageRoot, "tools", "run-t3-shim.sh")],
-      cwd: config.cwd,
-      env: {
-        ...Bun.env,
-        PI_OPENCODE_URL:
-          Bun.env.PI_OPENCODE_URL ?? `http://127.0.0.1:${config.port}`,
-        T3_HOME: t3Home,
-      },
-      signal: controller.signal,
-      stderr: "inherit",
-      stdout: "inherit",
-    });
-    process.once("SIGINT", stop);
-    process.once("SIGTERM", stop);
-    process.exitCode = await worker.exited;
-  } finally {
-    process.removeListener("SIGINT", stop);
-    process.removeListener("SIGTERM", stop);
-    stop();
+  if (options.command === "status") {
+    await runPm2(["status"], paths.pm2Home);
+    return;
   }
+  if (options.command === "logs") {
+    await runPm2(["logs", "--lines", "100"], paths.pm2Home);
+    return;
+  }
+  if (options.command === "stop") {
+    if (!existsSync(paths.ecosystem)) return;
+    await runPm2(["delete", paths.ecosystem], paths.pm2Home);
+    return;
+  }
+  prepareWorker(paths);
+  const frpcConfig = installFrpcConfig(options.frpcConfig, paths);
+  if (frpcConfig !== undefined) await ensureFrpc(paths);
+  writeEcosystem(paths, process.cwd(), packageRoot, frpcConfig);
+  await runPm2(
+    [options.command === "restart" ? "restart" : "start", paths.ecosystem],
+    paths.pm2Home
+  );
 }
 
 if (import.meta.main) void runCli();

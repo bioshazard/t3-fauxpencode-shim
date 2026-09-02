@@ -1,9 +1,9 @@
 {
-  "name": "pi-opencode-shim",
+  "name": "@bioshazard/t3-worker",
   "version": "0.1.0",
-  "private": true,
+  "private": false,
   "bin": {
-    "pi-opencode-shim": "./src/cli.ts"
+    "t3-worker": "./src/cli.ts"
   },
   "type": "module",
   "scripts": {
