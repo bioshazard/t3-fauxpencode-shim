@@ -1,8 +1,9 @@
 {
   "lockfileVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
-      "name": "pi-opencode-shim",
+      "name": "t3-fauxpencode",
       "dependencies": {
         "@earendil-works/pi-coding-agent": "0.84.4",
       },
