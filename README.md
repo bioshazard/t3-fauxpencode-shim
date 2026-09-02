@@ -24,11 +24,23 @@ bunx t3-fauxpencode start --frpc-config ~/frpc.toml
 
 The config is copied to the worker state directory and enables a third PM2 process. On its first use, the launcher downloads the matching official `frpc` binary for macOS/Linux `amd64` or `arm64`.
 
-FRP must target T3, not the shim:
+FRP must target T3, not the shim. Create a token file with the token configured on your FRP server, then protect it:
+
+```sh
+mkdir -p ~/.config/t3-fauxpencode
+printf '%s' '<frp-token>' > ~/.config/t3-fauxpencode/frp-token
+chmod 600 ~/.config/t3-fauxpencode/frp-token
+```
+
+Create `~/frpc.toml`:
 
 ```toml
 serverAddr = "frp.example.com"
 serverPort = 7000
+
+auth.method = "token"
+auth.tokenSource.type = "file"
+auth.tokenSource.file.path = "/Users/you/.config/t3-fauxpencode/frp-token"
 
 [[proxies]]
 name = "t3"
@@ -38,7 +50,13 @@ localPort = 3773
 customDomains = ["home.workers.example.com"]
 ```
 
-Use your FRP server's normal authentication settings in that same TOML; do not put its token in a CLI flag.
+Replace the server address, token-file path, and public hostname. Point that hostname's DNS record at the FRP server. The FRP server must have HTTP virtual-host support enabled (its `vhostHTTPPort`), and must use the same token authentication. Terminate TLS at the FRP server or its edge proxy: hosted T3 needs the public endpoint over HTTPS/WSS. Then start the worker:
+
+```sh
+bunx t3-fauxpencode start --frpc-config ~/frpc.toml
+```
+
+The launcher copies the TOML to its state directory, downloads the matching `frpc` binary if needed, and starts it under PM2. The token file remains where the TOML points; do not put its token in a CLI flag.
 
 ## Lifecycle
 
