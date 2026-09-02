@@ -2,9 +2,19 @@
   "name": "t3-fauxpencode",
   "version": "0.1.1",
   "private": false,
-  "bin": {
-    "t3-fauxpencode": "./src/cli.ts"
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bioshazard/t3-fauxpencode-shim"
   },
+  "bin": {
+    "t3-fauxpencode": "./bin/t3-fauxpencode.mjs"
+  },
+  "files": [
+    "bin",
+    "src",
+    "tools/run-t3-shim.sh",
+    "tools/write-t3-shim-settings.ts"
+  ],
   "type": "module",
   "scripts": {
     "dev": "bun run src/server.ts",
