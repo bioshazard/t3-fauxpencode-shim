@@ -37,6 +37,8 @@
     "t3:shim": "bash tools/run-t3-shim.sh",
     "t3:shim:source": "T3_ROOT=/tmp/poc-opencode-pi-shim-t3code-pinned bun run t3:shim",
     "dev:local": "bunx pm2@7.0.4 start ecosystem.config.cjs",
+    "dev:local:frp": "bun run src/prepare-local-frpc.ts && PI_FRPC_LOCAL=1 bunx pm2@7.0.4 start ecosystem.config.cjs",
+    "connection": "bun run tools/print-t3-connection.ts",
     "stop:local": "bunx pm2@7.0.4 delete ecosystem.config.cjs",
     "logs:local": "bunx pm2@7.0.4 logs",
     "test:e2e": "playwright test",

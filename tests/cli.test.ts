@@ -91,4 +91,10 @@ describe("CLI options", () => {
       rmSync(home, { force: true, recursive: true });
     }
   });
+
+  test("uses the installed FRP config for the local PM2 stack", () => {
+    const ecosystem = readFileSync("ecosystem.config.cjs", "utf8");
+    expect(ecosystem).toContain('".local", "share", "t3-fauxpencode", "frp"');
+    expect(ecosystem).toContain('join(frpcHome, "frpc.toml")');
+  });
 });

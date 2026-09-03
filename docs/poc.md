@@ -56,3 +56,11 @@ bun run dev:local
 ```
 
 Then use `bun run logs:local` and `bun run stop:local`. PM2 runs both the shim and T3; it does not enable watch mode, because T3 already manages its own development processes when `T3_ROOT` is used.
+
+To expose local T3 through FRP, place a valid T3-targeting configuration at `~/frpc.toml`, then run:
+
+```sh
+bun run dev:local:frp
+```
+
+This uses the checkout's FRP preparation code, copies the config into the local worker state directory, downloads `frpc` if absent, and starts it beside the shim and T3. Set `PI_FRPC_CONFIG=/path/to/frpc.toml` to use another config.
