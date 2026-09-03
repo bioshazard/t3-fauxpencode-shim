@@ -155,18 +155,47 @@ describe("prompt and lifecycle facade", () => {
 
     const session = await registry.getSession("thread-abort");
     if (session === null) throw new Error("test session was not created");
-    const prompt = session.prompt("long response", () => undefined);
+    const events: FacadeEvent[] = [];
+    const prompt = session.prompt("long response", (event) =>
+      events.push(event)
+    );
     await Promise.resolve();
     const abort = handler(
       new Request("http://shim.test/session/thread-abort/abort", {
         method: "POST",
       })
     );
-    const [promptSnapshot, abortResponse] = await Promise.all([prompt, abort]);
+    const repeatedAbort = handler(
+      new Request("http://shim.test/session/thread-abort/abort", {
+        method: "POST",
+      })
+    );
+    const [promptSnapshot, abortResponse, repeatedAbortResponse] =
+      await Promise.all([prompt, abort, repeatedAbort]);
 
     expect(abortResponse.status).toBe(200);
     expect(await abortResponse.json()).toBe(true);
+    expect(repeatedAbortResponse.status).toBe(200);
+    expect(await repeatedAbortResponse.json()).toBe(true);
     expect(promptSnapshot.messages).toHaveLength(1);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        properties: expect.objectContaining({
+          error: expect.objectContaining({ name: "MessageAbortedError" }),
+        }),
+        type: "session.error",
+      })
+    );
+    expect(
+      events.filter((event) => event.type === "session.error")
+    ).toHaveLength(1);
+    const abortEventIndex = events.findIndex(
+      (event) => event.type === "session.error"
+    );
+    expect(events[abortEventIndex + 1]).toMatchObject({
+      properties: { status: { type: "idle" } },
+      type: "session.status",
+    });
   });
 
   test("reverts a completed turn and continues from the resulting state", async () => {

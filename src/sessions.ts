@@ -132,7 +132,7 @@ class MemoryBackendSession implements BackendSession {
       this.abortRequested = false;
       this.status = "aborted";
       this.activeEmit = emit;
-      emitStatus(this.id, this.status, emit);
+      emitAbort(this.id, emit);
       this.activeEmit = undefined;
       return this.snapshot();
     }
@@ -247,12 +247,7 @@ class MemoryBackendSession implements BackendSession {
     }
     this.status = "aborted";
     this.updated = now();
-    this.activeEmit?.({
-      id: crypto.randomUUID(),
-      properties: { sessionStatus: this.status },
-      sessionID: this.id,
-      type: "session.status",
-    });
+    if (this.activeEmit !== undefined) emitAbort(this.id, this.activeEmit);
   }
 
   async update(permission: readonly JsonValue[] | undefined): Promise<void> {
@@ -290,6 +285,23 @@ function emitStatus(
     sessionID: id,
     type: "session.status",
   });
+}
+
+function emitAbort(id: string, emit: SessionEventSink): void {
+  emit({
+    id: crypto.randomUUID(),
+    properties: {
+      error: {
+        message: "The session was interrupted by the user.",
+        name: "MessageAbortedError",
+      },
+      sessionID: id,
+      sessionStatus: "aborted",
+    },
+    sessionID: id,
+    type: "session.error",
+  });
+  emitStatus(id, "aborted", emit);
 }
 
 function emitMessage(
@@ -456,7 +468,7 @@ export class PiBackendSession implements BackendSession {
       this.abortRequested = false;
       this.status = "aborted";
       this.activeEmit = emit;
-      emitStatus(this.id, this.status, emit);
+      emitAbort(this.id, emit);
       this.activeEmit = undefined;
       return this.snapshot();
     }
@@ -515,7 +527,8 @@ export class PiBackendSession implements BackendSession {
       emitStatus(this.id, this.status, emit);
       return this.snapshot();
     } catch (error) {
-      this.status = this.wasAborted() ? "aborted" : "error";
+      if (this.wasAborted()) return this.snapshot();
+      this.status = "error";
       emit({
         id: crypto.randomUUID(),
         properties: {
@@ -538,17 +551,16 @@ export class PiBackendSession implements BackendSession {
   }
 
   async abort(): Promise<void> {
+    if (this.wasAborted()) return;
     if (!this.session.isStreaming) {
       this.abortRequested = true;
       this.status = "aborted";
-      if (this.activeEmit !== undefined)
-        emitStatus(this.id, this.status, this.activeEmit);
+      if (this.activeEmit !== undefined) emitAbort(this.id, this.activeEmit);
       return;
     }
-    await this.session.abort();
     this.status = "aborted";
-    if (this.activeEmit !== undefined)
-      emitStatus(this.id, this.status, this.activeEmit);
+    await this.session.abort();
+    if (this.activeEmit !== undefined) emitAbort(this.id, this.activeEmit);
   }
 
   async update(permission: readonly JsonValue[] | undefined): Promise<void> {

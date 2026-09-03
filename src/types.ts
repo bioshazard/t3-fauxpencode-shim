@@ -135,7 +135,7 @@ export interface SessionSnapshot {
 
 export interface EventProperties {
   readonly delta?: string;
-  readonly error?: string;
+  readonly error?: JsonValue;
   readonly info?: OpenCodeMessageInfo;
   readonly isError?: boolean;
   readonly message?: FacadeMessage;
