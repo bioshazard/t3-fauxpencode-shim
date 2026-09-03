@@ -1,15 +1,14 @@
-// T3's project event stream is the best available signal for a cwd-less
-// session-create request. Real OpenCode never needs this because it runs
-// inside the project; this tracker remembers recent event-stream sightings so
-// session creation can use the active project without defaulting to PI_CWD.
+// T3 includes its selected project in health and event requests before a
+// cwd-less session-create request. This tracker keeps the latest signal.
 
 const DEFAULT_WINDOW_MS = 30_000;
 
-type Sighting = { readonly at: number };
+type Sighting = { readonly at: number; readonly sequence: number };
 
 export class ActiveDirectoryTracker {
   private readonly windowMs: number;
   private readonly sightings = new Map<string, Sighting>();
+  private sequence = 0;
 
   constructor(windowMs: number = DEFAULT_WINDOW_MS) {
     this.windowMs = windowMs;
@@ -17,7 +16,7 @@ export class ActiveDirectoryTracker {
 
   record(directory: string, now = Date.now()): void {
     this.prune(now);
-    this.sightings.set(directory, { at: now });
+    this.sightings.set(directory, { at: now, sequence: this.sequence++ });
   }
 
   current(now = Date.now()): string | null {
@@ -25,7 +24,11 @@ export class ActiveDirectoryTracker {
     let best: Sighting | null = null;
     let directory: string | null = null;
     for (const [candidate, sighting] of this.sightings) {
-      if (best === null || sighting.at > best.at) {
+      if (
+        best === null ||
+        sighting.at > best.at ||
+        (sighting.at === best.at && sighting.sequence > best.sequence)
+      ) {
         best = sighting;
         directory = candidate;
       }

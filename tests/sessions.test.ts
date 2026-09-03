@@ -234,19 +234,19 @@ describe("session creation directory selection", () => {
     });
   });
 
-  test("does not let background discovery override an event directory", async () => {
+  test("uses the most recently selected project from the health probe", async () => {
     const handler = directoryHandler();
     await handler(new Request(`http://shim.test/event?directory=${projectA}`));
     await handler(
       new Request(`http://shim.test/global/health?directory=${projectB}`)
     );
 
-    const response = await handler(post(JSON.stringify({ id: "event-wins" })));
+    const response = await handler(post(JSON.stringify({ id: "health-wins" })));
 
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({
-      directory: realpathSync(projectA),
-      id: "event-wins",
+      directory: realpathSync(projectB),
+      id: "health-wins",
     });
   });
 });

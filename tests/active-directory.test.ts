@@ -17,6 +17,14 @@ describe("active directory tracker", () => {
     expect(tracker.current(2_500)).toBe("/proj/new");
   });
 
+  test("uses record order when sightings share a timestamp", () => {
+    const tracker = new ActiveDirectoryTracker();
+    tracker.record("/proj/old", 1_000);
+    tracker.record("/proj/new", 1_000);
+
+    expect(tracker.current(1_000)).toBe("/proj/new");
+  });
+
   test("refreshes a repeated directory instead of stacking it", () => {
     const tracker = new ActiveDirectoryTracker(1_000);
     tracker.record("/proj/a", 0);

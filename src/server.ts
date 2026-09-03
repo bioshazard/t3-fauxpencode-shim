@@ -123,11 +123,11 @@ function createSessionHandler(
   events: EventHub
 ): (request: Request) => Response | Promise<Response> {
   const piSkillDiscovery = discoverPiSkills(config);
-  // T3 omits cwd on POST /session. Its project event stream is the strongest
-  // available directory signal. Do not fall back to the launch directory:
-  // that would let a selected project run in an unexpected workspace.
+  // T3 omits cwd on POST /session. It sends the selected project directory on
+  // its health probe before creating the session, then confirms it on /event.
+  // Do not fall back to the launch directory: that would run in the wrong repo.
   const activeDirectories = new ActiveDirectoryTracker();
-  const trackEventDirectory = (url: URL): void => {
+  const trackProjectDirectory = (url: URL): void => {
     const directory = url.searchParams.get("directory");
     if (directory === null || directory.length === 0) return;
     const canonicalDirectory = canonicalAllowedCwd(
@@ -143,6 +143,7 @@ function createSessionHandler(
 
     if (url.pathname === "/global/health") {
       if (request.method !== "GET") return methodNotAllowed(request);
+      trackProjectDirectory(url);
       return jsonResponse({
         healthy: true,
         service: "pi-opencode-server",
@@ -171,7 +172,7 @@ function createSessionHandler(
 
     if (url.pathname === "/global/event" || url.pathname === "/event") {
       if (request.method !== "GET") return methodNotAllowed(request);
-      trackEventDirectory(url);
+      trackProjectDirectory(url);
       return events.response();
     }
 
