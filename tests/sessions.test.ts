@@ -168,23 +168,20 @@ describe("session creation directory selection", () => {
       new SessionRegistry(new InMemorySessionBackend())
     );
 
-  test("requires an explicit cwd or a project event directory", async () => {
+  test("falls back to the configured launch directory", async () => {
     const handler = directoryHandler();
     const response = await handler(post(JSON.stringify({ id: "quiet" })));
 
-    expect(response.status).toBe(409);
-    expect(await response.json()).toEqual({
-      error: {
-        code: "cwd_required",
-        message:
-          "An explicit session cwd or an allowed T3 project directory is required.",
-      },
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      directory: realpathSync(root),
+      id: "quiet",
     });
 
     const empty = await handler(
       new Request("http://shim.test/session", { method: "POST" })
     );
-    expect(empty.status).toBe(409);
+    expect(empty.status).toBe(200);
   });
 
   test("creates the session in the directory signaled by the /event stream", async () => {
@@ -224,13 +221,10 @@ describe("session creation directory selection", () => {
 
     const response = await handler(post(JSON.stringify({ id: "outside" })));
 
-    expect(response.status).toBe(409);
-    expect(await response.json()).toEqual({
-      error: {
-        code: "cwd_required",
-        message:
-          "An explicit session cwd or an allowed T3 project directory is required.",
-      },
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      directory: realpathSync(root),
+      id: "outside",
     });
   });
 
