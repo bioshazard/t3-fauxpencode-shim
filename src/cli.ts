@@ -94,7 +94,13 @@ export async function runCli(args = Bun.argv.slice(2)): Promise<void> {
   prepareWorker(paths);
   const frpcConfig = installFrpcConfig(options.frpcConfig, paths);
   if (frpcConfig !== undefined) await ensureFrpc(paths);
-  writeEcosystem(paths, process.cwd(), packageRoot, frpcConfig);
+  writeEcosystem(
+    paths,
+    process.cwd(),
+    packageRoot,
+    frpcConfig,
+    Bun.env.PI_ALLOWED_ROOTS
+  );
   await runPm2(
     [options.command === "restart" ? "restart" : "start", paths.ecosystem],
     paths.pm2Home

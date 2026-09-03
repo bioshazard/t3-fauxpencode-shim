@@ -164,7 +164,8 @@ export function writeEcosystem(
   paths: WorkerPaths,
   cwd: string,
   packageRoot: string,
-  frpcConfig: string | undefined
+  frpcConfig: string | undefined,
+  allowedRoots = cwd
 ): void {
   const apps: Array<Record<string, unknown>> = [
     {
@@ -172,7 +173,7 @@ export function writeEcosystem(
       autorestart: true,
       cwd,
       env: {
-        PI_ALLOWED_ROOTS: cwd,
+        PI_ALLOWED_ROOTS: allowedRoots,
         PI_CWD: cwd,
         PI_OPENCODE_HOST: "127.0.0.1",
         PI_OPENCODE_PORT: String(SHIM_PORT),

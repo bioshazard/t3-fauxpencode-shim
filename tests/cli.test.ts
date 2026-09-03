@@ -46,6 +46,17 @@ describe("CLI options", () => {
       expect(ecosystem).toContain('"name": "t3-fauxpencode-frpc"');
       expect(ecosystem).toContain('"PI_ALLOWED_ROOTS": "/project"');
       expect(ecosystem).toContain('"-c",');
+
+      writeEcosystem(
+        paths,
+        "/project",
+        "/package",
+        undefined,
+        "/workspaces/dev"
+      );
+      expect(readFileSync(paths.ecosystem, "utf8")).toContain(
+        '"PI_ALLOWED_ROOTS": "/workspaces/dev"'
+      );
     } finally {
       rmSync(home, { force: true, recursive: true });
     }
