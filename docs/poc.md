@@ -64,3 +64,15 @@ bun run dev:local:frp
 ```
 
 This uses the checkout's FRP preparation code, copies the config into the local worker state directory, downloads `frpc` if absent, and starts it beside the shim and T3. Set `PI_FRPC_CONFIG=/path/to/frpc.toml` to use another config.
+
+Restart only T3 after stale client/provider state:
+
+```sh
+bun run restart:t3:local
+```
+
+Restart the full local FRP stack with:
+
+```sh
+bun run restart:local:frp
+```
