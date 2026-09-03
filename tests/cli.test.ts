@@ -38,6 +38,7 @@ describe("CLI options", () => {
     try {
       const paths = workerPaths(home);
       prepareWorker(paths);
+      expect(paths.ecosystem).toEndWith("ecosystem.config.cjs");
       writeEcosystem(paths, "/project", "/package", paths.frpcConfig);
       const ecosystem = readFileSync(paths.ecosystem, "utf8");
       expect(ecosystem).toContain('"name": "t3-fauxpencode-shim"');

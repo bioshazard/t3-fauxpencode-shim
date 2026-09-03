@@ -29,7 +29,7 @@ export function defaultWorkerHome(home = homedir()): string {
 
 export function workerPaths(home = defaultWorkerHome()): WorkerPaths {
   return {
-    ecosystem: join(home, "pm2", "ecosystem.cjs"),
+    ecosystem: join(home, "pm2", "ecosystem.config.cjs"),
     frpc: join(home, "frp", "frpc"),
     frpcConfig: join(home, "frp", "frpc.toml"),
     home,
@@ -120,16 +120,29 @@ export async function ensureFrpc(paths: WorkerPaths): Promise<void> {
     throw new Error("Latest FRP release returned an invalid version.");
   }
   const archive = frpcArchiveName(version);
-  const download = await fetch(
-    `https://github.com/fatedier/frp/releases/download/v${version}/${archive}`
-  );
-  if (!download.ok || download.body === null) {
-    throw new Error(`Could not download ${archive} (${download.status}).`);
-  }
   const archivePath = join(paths.home, archive);
   const extractPath = join(paths.home, `.frp-${version}-${Date.now()}`);
   try {
-    await Bun.write(archivePath, download);
+    console.log(`Downloading ${archive}...`);
+    const download = Bun.spawn({
+      cmd: [
+        "curl",
+        "--fail",
+        "--location",
+        "--retry",
+        "3",
+        "--silent",
+        "--show-error",
+        "--output",
+        archivePath,
+        `https://github.com/fatedier/frp/releases/download/v${version}/${archive}`,
+      ],
+      stderr: "inherit",
+      stdout: "inherit",
+    });
+    if ((await download.exited) !== 0) {
+      throw new Error(`Could not download ${archive}.`);
+    }
     mkdirSync(extractPath, { recursive: true });
     const unpack = Bun.spawn({
       cmd: ["tar", "-xzf", archivePath, "-C", extractPath],
