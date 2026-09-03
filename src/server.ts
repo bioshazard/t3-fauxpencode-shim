@@ -123,9 +123,9 @@ function createSessionHandler(
   events: EventHub
 ): (request: Request) => Response | Promise<Response> {
   const piSkillDiscovery = discoverPiSkills(config);
-  // T3 omits cwd on POST /session. Prefer its project event stream, but this
-  // launcher deliberately has one project per machine, so fall back to the
-  // configured launch directory when no stream is open yet.
+  // T3 omits cwd on POST /session. Its project event stream is the strongest
+  // available directory signal. Do not fall back to the launch directory:
+  // that would let a selected project run in an unexpected workspace.
   const activeDirectories = new ActiveDirectoryTracker();
   const trackEventDirectory = (url: URL): void => {
     const directory = url.searchParams.get("directory");
@@ -178,7 +178,7 @@ function createSessionHandler(
     if (url.pathname === "/session" && request.method === "POST") {
       return readCreateSessionRequest(
         request,
-        activeDirectories.current() ?? config.cwd
+        activeDirectories.current()
       ).then(async (parsed) => {
         if (parsed.kind === "error") {
           return jsonResponse(
@@ -188,7 +188,10 @@ function createSessionHandler(
         }
         if (parsed.kind === "missing_cwd") {
           return jsonResponse(
-            contractError("cwd_required", "No configured launch directory."),
+            contractError(
+              "cwd_required",
+              "An explicit session cwd or an allowed T3 project directory is required."
+            ),
             409
           );
         }
