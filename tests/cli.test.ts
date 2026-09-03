@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -7,6 +13,7 @@ import { defaultWorkerHome, parseWorkerCliOptions } from "../src/cli.ts";
 import {
   installFrpcConfig,
   prepareWorker,
+  t3WorktreesRoot,
   workerPaths,
   writeEcosystem,
 } from "../src/worker.ts";
@@ -44,7 +51,10 @@ describe("CLI options", () => {
       expect(ecosystem).toContain('"name": "t3-fauxpencode-shim"');
       expect(ecosystem).toContain('"name": "t3-fauxpencode-t3"');
       expect(ecosystem).toContain('"name": "t3-fauxpencode-frpc"');
-      expect(ecosystem).toContain('"PI_ALLOWED_ROOTS": "/project"');
+      expect(ecosystem).toContain(
+        `"PI_ALLOWED_ROOTS": "/project,${join(paths.t3Home, "worktrees")}"`
+      );
+      expect(existsSync(t3WorktreesRoot(paths))).toBe(true);
       expect(ecosystem).toContain('"-c",');
 
       writeEcosystem(
@@ -55,7 +65,7 @@ describe("CLI options", () => {
         "/workspaces/dev"
       );
       expect(readFileSync(paths.ecosystem, "utf8")).toContain(
-        '"PI_ALLOWED_ROOTS": "/workspaces/dev"'
+        `"PI_ALLOWED_ROOTS": "/workspaces/dev,${join(paths.t3Home, "worktrees")}"`
       );
     } finally {
       rmSync(home, { force: true, recursive: true });

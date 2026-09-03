@@ -39,8 +39,18 @@ export function workerPaths(home = defaultWorkerHome()): WorkerPaths {
   };
 }
 
+export function t3WorktreesRoot(paths: WorkerPaths): string {
+  return join(paths.t3Home, "worktrees");
+}
+
 export function prepareWorker(paths: WorkerPaths): void {
-  for (const path of [paths.home, paths.piHome, paths.pm2Home, paths.t3Home]) {
+  for (const path of [
+    paths.home,
+    paths.piHome,
+    paths.pm2Home,
+    paths.t3Home,
+    t3WorktreesRoot(paths),
+  ]) {
     mkdirSync(path, { recursive: true });
   }
   mkdirSync(dirname(paths.ecosystem), { recursive: true });
@@ -167,13 +177,25 @@ export function writeEcosystem(
   frpcConfig: string | undefined,
   allowedRoots = cwd
 ): void {
+  // T3 runs threads inside worktrees under the worker home, so the worktrees
+  // root must always be an allowed session root, independent of PI_ALLOWED_ROOTS.
+  const configured = String(allowedRoots);
+  const roots = Array.from(
+    new Set([
+      ...(configured.trim().length > 0 ? configured : cwd)
+        .split(",")
+        .map((root) => root.trim())
+        .filter((root) => root.length > 0),
+      t3WorktreesRoot(paths),
+    ])
+  );
   const apps: Array<Record<string, unknown>> = [
     {
       args: [join(packageRoot, "src", "server.ts")],
       autorestart: true,
       cwd,
       env: {
-        PI_ALLOWED_ROOTS: allowedRoots,
+        PI_ALLOWED_ROOTS: roots.join(","),
         PI_CWD: cwd,
         PI_OPENCODE_HOST: "127.0.0.1",
         PI_OPENCODE_PORT: String(SHIM_PORT),
