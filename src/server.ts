@@ -1,8 +1,11 @@
 import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 
 import {
   DefaultResourceLoader,
   getAgentDir,
+  ModelRegistry,
+  ModelRuntime,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 
@@ -15,6 +18,7 @@ import {
   messagesResponse,
   providerResponse,
   sessionResponse,
+  type PiAvailableModel,
 } from "./opencode.ts";
 import {
   readCreateSessionRequest,
@@ -102,6 +106,33 @@ async function discoverPiSkills(
   ).then((items) => items.filter((item) => item !== null));
 }
 
+/** Enumerate the models the local pi installation can actually use. */
+async function discoverPiModels(
+  config: ShimConfig
+): Promise<readonly PiAvailableModel[]> {
+  try {
+    const runtime = await ModelRuntime.create({
+      refreshOnCreate: false,
+      ...(config.agentDir === undefined
+        ? {}
+        : {
+            authPath: resolve(config.agentDir, "auth.json"),
+            modelsPath: resolve(config.agentDir, "models.json"),
+          }),
+    });
+    const registry = new ModelRegistry(runtime);
+    await registry.refresh();
+    return registry.getAvailable();
+  } catch (error) {
+    console.error(
+      `pi model discovery failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+    return [];
+  }
+}
+
 export function createHandler(
   config: ShimConfig,
   sessions = new SessionRegistry(new InMemorySessionBackend()),
@@ -123,6 +154,7 @@ function createSessionHandler(
   events: EventHub
 ): (request: Request) => Response | Promise<Response> {
   const piSkillDiscovery = discoverPiSkills(config);
+  const piModelDiscovery = discoverPiModels(config);
   // T3 omits cwd on POST /session. It sends the selected project directory on
   // its health probe before creating the session, then confirms it on /event.
   // Do not fall back to the launch directory: that would run in the wrong repo.
@@ -153,7 +185,9 @@ function createSessionHandler(
 
     if (url.pathname === "/provider") {
       if (request.method !== "GET") return methodNotAllowed(request);
-      return jsonResponse(providerResponse(config));
+      return piModelDiscovery.then((models) =>
+        jsonResponse(providerResponse(config, models))
+      );
     }
 
     if (

@@ -56,11 +56,51 @@ describe("health and discovery", () => {
     });
   });
 
-  test("reports the configured Pi model", async () => {
+  test("always reports the configured Pi model alongside pi registry models", async () => {
     const response = await request("/provider");
 
     expect(response.status).toBe(200);
-    const body = await response.json();
+    const body = (await response.json()) as {
+      all: Array<{
+        env: unknown;
+        id: string;
+        models: Record<string, unknown>;
+        name: string;
+        options: unknown;
+        source: string;
+      }>;
+      connected: string[];
+      default: Record<string, string>;
+    };
+    expect(body.default).toEqual({ pi: "test-model" });
+    expect(body.connected).toContain("pi");
+    const configured = body.all.find((provider) => provider.id === "pi");
+    expect(configured).toBeDefined();
+    expect(configured).toMatchObject({
+      env: [],
+      name: "Pi",
+      options: {},
+      source: "custom",
+    });
+    expect(configured!.models["test-model"]).toMatchObject({
+      id: "test-model",
+      name: "test-model",
+      providerID: "pi",
+    });
+    // Every discovered model belongs to its provider and stays selectable.
+    for (const provider of body.all) {
+      expect(provider.env).toEqual([]);
+      expect(provider.source).toBe("custom");
+      for (const [id, model] of Object.entries(provider.models)) {
+        expect(model).toMatchObject({ id, providerID: provider.id });
+      }
+    }
+  });
+
+  test("falls back to the configured model when pi registry discovery is empty", async () => {
+    const { providerResponse } = await import("../src/opencode.ts");
+
+    const body = providerResponse(config);
     expect(body).toEqual({
       all: [
         {
@@ -75,11 +115,6 @@ describe("health and discovery", () => {
       connected: ["pi"],
       default: { pi: "test-model" },
     });
-    expect(
-      (body as { all: [{ models: Record<string, unknown> }] }).all[0].models[
-        "test-model"
-      ]
-    ).toMatchObject({ id: "test-model", name: "test-model", providerID: "pi" });
   });
 
   test("exposes agents and Pi-loaded skills", async () => {
