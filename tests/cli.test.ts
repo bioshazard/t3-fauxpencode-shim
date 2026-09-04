@@ -97,4 +97,10 @@ describe("CLI options", () => {
     expect(ecosystem).toContain('".local", "share", "t3-fauxpencode", "frp"');
     expect(ecosystem).toContain('join(frpcHome, "frpc.toml")');
   });
+
+  test("keeps macOS awake while T3 runs", () => {
+    const launcher = readFileSync("tools/run-t3-shim.sh", "utf8");
+    expect(launcher).toContain("keep_awake=(caffeinate -i)");
+    expect(launcher).toContain('exec "${keep_awake[@]}" bunx');
+  });
 });
