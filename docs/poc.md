@@ -76,3 +76,5 @@ Restart the full local FRP stack with:
 ```sh
 bun run restart:local:frp
 ```
+
+If `frpc-local` logs `no route to host` despite a working `~/frpc.toml`, see [the PM2/FRPC network-state RCA](rca-frpc-pm2-network.md). It includes the PM2-daemon reset and verification procedure.
