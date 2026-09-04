@@ -1,4 +1,4 @@
 pre-push:
   commands:
     ci:
-      run: bun run check && bun test && bun run build
+      run: bun run check && bun run test && bun run build
