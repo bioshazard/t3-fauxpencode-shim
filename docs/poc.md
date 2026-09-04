@@ -32,7 +32,7 @@ Configuration:
 - `PI_CWD`: shim working directory for Pi resource discovery; it is not a session-creation fallback.
 - `PI_ALLOWED_ROOTS`: comma-separated allowed session roots; defaults to `PI_CWD`. Set this in the launch environment; the PM2 ecosystem file passes it through unchanged.
 
-For the local PM2 stack, export `PI_ALLOWED_ROOTS` before starting or restarting it, then run `bunx pm2@7.0.4 restart pi-opencode-shim --update-env`. With no environment value, PM2 permits only the shim checkout, discovered from `ecosystem.config.cjs`. Every added workspace root must already exist; sessions outside this allow list are rejected.
+For the local PM2 stack, put `PI_ALLOWED_ROOTS` in the checkout-local, gitignored `.env` file, then run `bun run restart:local:frp` (or restart the shim with `--update-env`). `ecosystem.config.cjs` loads that file before constructing the PM2 app environment. With no environment value, PM2 permits only the shim checkout, discovered from `ecosystem.config.cjs`. Every added workspace root must already exist; sessions outside this allow list are rejected.
 
 - `PI_OPENCODE_HOST` / `PI_OPENCODE_PORT`: listener address.
 - `PI_PROVIDER` / `PI_MODEL`: provider discovery presentation values; Pi still resolves runtime model/auth through its native configuration.
