@@ -2,7 +2,6 @@ import type {
   FacadeMessage,
   FacadePart,
   JsonValue,
-  Provider,
   ProviderModel,
   ProviderResponse,
   SessionSnapshot,
@@ -15,7 +14,66 @@ export interface OpenCodeSessionMessage {
   readonly parts: readonly JsonValue[];
 }
 
-function model(config: ShimConfig): ProviderModel {
+/** Structural view of a pi-ai Model entry; ModelRegistry.getAvailable() satisfies it. */
+export interface PiAvailableModel {
+  readonly id: string;
+  readonly name: string;
+  readonly api: string;
+  readonly provider: string;
+  readonly baseUrl: string;
+  readonly reasoning: boolean;
+  readonly input: readonly ("text" | "image")[];
+  readonly cost: {
+    readonly input: number;
+    readonly output: number;
+    readonly cacheRead: number;
+    readonly cacheWrite: number;
+  };
+  readonly contextWindow: number;
+  readonly maxTokens: number;
+}
+
+export function toProviderModel(model: PiAvailableModel): ProviderModel {
+  return {
+    api: { id: model.api, npm: "@earendil-works/pi-ai", url: model.baseUrl },
+    capabilities: {
+      attachment: model.input.includes("image"),
+      input: {
+        audio: false,
+        image: model.input.includes("image"),
+        pdf: false,
+        text: model.input.includes("text"),
+        video: false,
+      },
+      interleaved: false,
+      output: {
+        audio: false,
+        image: false,
+        pdf: false,
+        text: true,
+        video: false,
+      },
+      reasoning: model.reasoning,
+      temperature: true,
+      toolcall: true,
+    },
+    cost: {
+      cache: { read: model.cost.cacheRead, write: model.cost.cacheWrite },
+      input: model.cost.input,
+      output: model.cost.output,
+    },
+    headers: {},
+    id: model.id,
+    limit: { context: model.contextWindow, output: model.maxTokens },
+    name: model.name,
+    options: {},
+    providerID: model.provider,
+    release_date: new Date(0).toISOString(),
+    status: "active",
+  };
+}
+
+function configuredModel(config: ShimConfig): ProviderModel {
   return {
     api: { id: "pi", npm: "@earendil-works/pi-ai", url: "" },
     capabilities: {
@@ -51,19 +109,43 @@ function model(config: ShimConfig): ProviderModel {
   };
 }
 
-export function providerResponse(config: ShimConfig): ProviderResponse {
-  const provider: Provider = {
-    env: [],
-    id: config.providerId,
-    models: { [config.modelId]: model(config) },
-    name: "Pi",
-    options: {},
-    source: "custom",
+export function providerResponse(
+  config: ShimConfig,
+  discovered: readonly PiAvailableModel[] = []
+): ProviderResponse {
+  const byProvider = new Map<
+    string,
+    { name: string; models: Record<string, ProviderModel> }
+  >();
+  const addModel = (
+    providerId: string,
+    name: string,
+    model: ProviderModel
+  ): void => {
+    const existing = byProvider.get(providerId) ?? { name, models: {} };
+    if (Object.hasOwn(existing.models, model.id)) return;
+    byProvider.set(providerId, {
+      name,
+      models: { ...existing.models, [model.id]: model },
+    });
   };
+  for (const model of discovered) {
+    addModel(model.provider, model.provider, toProviderModel(model));
+  }
+  // The configured model must always be selectable, even when it is missing
+  // from (or auth is lost for) the pi registry.
+  addModel(config.providerId, "Pi", configuredModel(config));
   return {
-    all: [provider],
-    connected: [provider.id],
-    default: { [provider.id]: config.modelId },
+    all: [...byProvider.entries()].map(([id, entry]) => ({
+      env: [] as const,
+      id,
+      models: entry.models,
+      name: entry.name,
+      options: {} as const,
+      source: "custom" as const,
+    })),
+    connected: [...byProvider.keys()],
+    default: { [config.providerId]: config.modelId },
   };
 }
 

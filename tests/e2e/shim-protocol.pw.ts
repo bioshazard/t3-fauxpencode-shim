@@ -16,16 +16,17 @@ test.describe("pi-opencode-server HTTP contract", () => {
 
     const providers = await request.get("/provider");
     expect(providers.ok()).toBe(true);
-    expect(await providers.json()).toMatchObject({
-      connected: ["pi"],
-      default: { pi: expect.any(String) },
-      all: [
-        {
-          id: "pi",
-          name: "Pi",
-          source: "custom",
-        },
-      ],
+    const body = (await providers.json()) as {
+      all: Array<{ id: string; name: string; source: string }>;
+      connected: string[];
+      default: Record<string, string>;
+    };
+    expect(body.default).toEqual({ pi: expect.any(String) });
+    expect(body.connected).toContain("pi");
+    expect(body.all).toContainEqual({
+      id: "pi",
+      name: "Pi",
+      source: "custom",
     });
   });
 

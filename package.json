@@ -19,7 +19,7 @@
   "scripts": {
     "dev": "bun run src/server.ts",
     "start": "bun run src/server.ts",
-    "test": "bun test",
+    "test": "bun test tests/*.test.ts",
     "build": "bun build src/server.ts --outdir dist --target bun",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint .",
