@@ -3,6 +3,10 @@ const { homedir } = require("node:os");
 const { join } = require("node:path");
 
 const repoDir = __dirname;
+// PM2 evaluates this file with Node rather than Bun, so explicitly load the
+// checkout-local, gitignored configuration used by the local development stack.
+const localEnvPath = join(repoDir, ".env");
+if (existsSync(localEnvPath)) process.loadEnvFile?.(localEnvPath);
 const allowedRoots = process.env.PI_ALLOWED_ROOTS ?? repoDir;
 
 const apps = [
