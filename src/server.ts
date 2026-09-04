@@ -1,11 +1,10 @@
 import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
 
 import {
+  createAgentSessionServices,
   DefaultResourceLoader,
   getAgentDir,
   ModelRegistry,
-  ModelRuntime,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 
@@ -111,16 +110,17 @@ async function discoverPiModels(
   config: ShimConfig
 ): Promise<readonly PiAvailableModel[]> {
   try {
-    const runtime = await ModelRuntime.create({
-      refreshOnCreate: false,
-      ...(config.agentDir === undefined
-        ? {}
-        : {
-            authPath: resolve(config.agentDir, "auth.json"),
-            modelsPath: resolve(config.agentDir, "models.json"),
-          }),
+    const agentDir = config.agentDir ?? getAgentDir();
+    // ModelRuntime alone loads auth/models.json but not Pi extensions. Use Pi's
+    // normal service bootstrap so extension-registered dynamic providers are
+    // included in the same catalogue the Pi CLI sees.
+    const services = await createAgentSessionServices({
+      agentDir,
+      cwd: config.cwd,
+      modelRuntimeSignal: AbortSignal.timeout(15_000),
+      settingsManager: SettingsManager.create(config.cwd, agentDir),
     });
-    const registry = new ModelRegistry(runtime);
+    const registry = new ModelRegistry(services.modelRuntime);
     await registry.refresh();
     return registry.getAvailable();
   } catch (error) {
