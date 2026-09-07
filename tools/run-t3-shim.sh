@@ -19,4 +19,6 @@ if [[ -n "${T3_ROOT:-}" ]]; then
   exec "${keep_awake[@]}" pnpm --dir "$T3_ROOT" run dev --home-dir "$t3_home"
 fi
 
-exec "${keep_awake[@]}" bunx "t3@${T3_VERSION:-0.0.37}" --base-dir "$t3_home"
+# 0.0.37 references Ghostty Wasm terminal assets that were omitted from its
+# published package. 0.0.39 ships those assets.
+exec "${keep_awake[@]}" bunx "t3@${T3_VERSION:-0.0.39}" --base-dir "$t3_home"
