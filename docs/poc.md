@@ -47,7 +47,7 @@ Start the shim, then launch T3 with an isolated shim-only state directory:
 PI_OPENCODE_URL=http://127.0.0.1:41874 bun run t3:shim
 ```
 
-The command writes `artifacts/t3-shim-home/userdata/settings.json`, disables Codex and Claude, enables OpenCode, and sets T3 text generation to `pi/configured`. It starts the published `t3@0.0.37` CLI by default. Set `T3_ROOT` to use a source checkout for debugging, `T3_VERSION` for another exact release, or `T3_HOME` for another disposable state directory. The settings file is deliberately rewritten on every launch.
+The command writes `artifacts/t3-shim-home/userdata/settings.json`, disables Codex and Claude, enables OpenCode, and sets T3 text generation to `pi/configured`. It starts the published `t3@0.0.39` CLI by default. Version 0.0.37 omitted the Ghostty Wasm terminal assets, so its terminal UI cannot start. Set `T3_ROOT` to use a source checkout for debugging, `T3_VERSION` for another exact release, or `T3_HOME` for another disposable state directory. The settings file is deliberately rewritten on every launch.
 
 To keep local services detached from the terminal, run:
 

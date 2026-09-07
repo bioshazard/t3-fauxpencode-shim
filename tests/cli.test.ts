@@ -102,5 +102,6 @@ describe("CLI options", () => {
     const launcher = readFileSync("tools/run-t3-shim.sh", "utf8");
     expect(launcher).toContain("keep_awake=(caffeinate -i)");
     expect(launcher).toContain('exec "${keep_awake[@]}" bunx');
+    expect(launcher).toContain("t3@${T3_VERSION:-0.0.39}");
   });
 });

@@ -37,7 +37,7 @@ console.log("Fresh pairing token:");
 const pair = Bun.spawn({
   cmd: [
     "bunx",
-    `t3@${process.env.T3_VERSION ?? "0.0.37"}`,
+    `t3@${process.env.T3_VERSION ?? "0.0.39"}`,
     "auth",
     "pairing",
     "create",
