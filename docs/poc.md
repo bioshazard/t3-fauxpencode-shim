@@ -16,7 +16,7 @@ This is a provisional, Bun-native facade. It is not the captured T3 contract yet
 | Prompt | `POST /session/:id/message` or `/prompt` | Pi turn plus SSE lifecycle; text and data-URL image parts are accepted |
 | Async prompt | `POST /session/:id/prompt_async` | Accepted turn plus SSE lifecycle |
 | Session status | `GET /session/status` | Session ID to idle/busy status map |
-| Abort | `POST /session/:id/abort` | Boolean acknowledgement (facade behavior; compatibility semantics pending reference capture) |
+| Abort | `POST /session/:id/abort` | Boolean acknowledgement; asks Pi to abort the active run (`session.abort()`, a safe no-op when idle), clears Pi's queued messages, sets the abort flag so the next queued prompt is cancelled, and publishes `session.error` (`MessageAbortedError`) plus `session.status: aborted` on the event stream. Event compatibility semantics remain pending reference capture. |
 | Revert | `POST /session/:id/revert` | Updated session after tree navigation (mapping remains provisional until reference capture) |
 
 The deployed entrypoint uses `PiSessionBackend`; tests use an injectable, deterministic backend to exercise tool ordering, aborts, rollback, permissions, image projection, and concurrent-session isolation without requiring a model call. These are facade behaviors, not captured compatibility claims: `contracts/matrix.json` remains `pending-reference-capture` until the pinned reference gate produces evidence.

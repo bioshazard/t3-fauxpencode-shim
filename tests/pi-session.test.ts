@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -18,6 +18,62 @@ import {
 } from "../src/sessions.ts";
 import type { FacadeEvent } from "../src/types.ts";
 import type { ShimConfig } from "../src/types.ts";
+
+interface FakePiSessionOptions {
+  readonly streaming?: boolean;
+  readonly prompt?: () => Promise<unknown>;
+  readonly abort?: () => Promise<void>;
+}
+
+function createFakePiSession(options: FakePiSessionOptions = {}) {
+  const calls: string[] = [];
+  const messages: AgentMessage[] = [];
+  // A real Pi session is idle once its abort settles.
+  let streaming = options.streaming ?? false;
+  const session = {
+    abort: async () => {
+      calls.push("abort");
+      if (options.abort !== undefined) await options.abort();
+      streaming = false;
+    },
+    clearQueue: () => {
+      calls.push("clearQueue");
+      return { followUp: [], steering: [] };
+    },
+    dispose: () => undefined,
+    get isStreaming() {
+      return streaming;
+    },
+    messages,
+    model: undefined,
+    prompt: async (...args: unknown[]) => {
+      calls.push("prompt");
+      if (options.prompt === undefined) return undefined;
+      return options.prompt(...(args as []));
+    },
+    sessionManager: {
+      getEntries: () => [],
+      getHeader: () => null,
+    },
+    subscribe: () => () => undefined,
+  };
+  return {
+    calls,
+    session: session as unknown as AgentSession,
+  };
+}
+
+function createFakePiBackend(
+  id: string,
+  session: AgentSession,
+  title: string
+): PiBackendSession {
+  return new PiBackendSession(id, session, process.cwd(), title, [], {
+    agent: "pi",
+    modelId: "configured",
+    providerId: "pi",
+  });
+}
 
 describe("Pi session backend", () => {
   test("relays a detached completion after its originating prompt settles", async () => {
@@ -92,6 +148,142 @@ describe("Pi session backend", () => {
             "worker finished"
       )
     ).toHaveLength(1);
+  });
+
+  test("abort while idle asks Pi to stop, clears the queue, and publishes the abort event", async () => {
+    const fake = createFakePiSession({ streaming: false });
+    const backend = createFakePiBackend(
+      "pi-abort-idle",
+      fake.session,
+      "pi abort idle"
+    );
+    const seen: FacadeEvent[] = [];
+    const logSpy = spyOn(console, "log").mockImplementation(() => undefined);
+
+    try {
+      await backend.abort((event) => seen.push(event));
+      expect(logSpy).toHaveBeenCalledWith(
+        expect.stringContaining('"event":"session.abort"')
+      );
+      expect(logSpy).toHaveBeenCalledWith(
+        expect.stringContaining('"isStreaming":false')
+      );
+    } finally {
+      logSpy.mockRestore();
+    }
+
+    expect(fake.calls).toContain("clearQueue");
+    expect(fake.calls.filter((call) => call === "prompt")).toHaveLength(0);
+    expect(seen).toContainEqual(
+      expect.objectContaining({
+        properties: expect.objectContaining({
+          error: expect.objectContaining({ name: "MessageAbortedError" }),
+        }),
+        type: "session.error",
+      })
+    );
+    expect(seen).toContainEqual(
+      expect.objectContaining({
+        properties: expect.objectContaining({
+          sessionStatus: "aborted",
+          status: { type: "idle" },
+        }),
+        type: "session.status",
+      })
+    );
+    expect(backend.snapshot().status).toBe("aborted");
+  });
+
+  test("abort while streaming asks Pi to stop the run", async () => {
+    let aborted = false;
+    const fake = createFakePiSession({
+      abort: async () => {
+        aborted = true;
+      },
+      streaming: true,
+    });
+    const backend = createFakePiBackend(
+      "pi-abort-busy",
+      fake.session,
+      "pi abort busy"
+    );
+    const seen: FacadeEvent[] = [];
+
+    await backend.abort((event) => seen.push(event));
+
+    expect(aborted).toBe(true);
+    expect(fake.calls).toContain("abort");
+    expect(fake.calls).toContain("clearQueue");
+    expect(seen).toContainEqual(
+      expect.objectContaining({ type: "session.error" })
+    );
+    expect(backend.snapshot().status).toBe("aborted");
+  });
+
+  test("abort before a prompt cancels the queued prompt without calling Pi", async () => {
+    const fake = createFakePiSession({ streaming: false });
+    const backend = createFakePiBackend(
+      "pi-abort-queued",
+      fake.session,
+      "pi abort queued"
+    );
+
+    await backend.abort();
+    const seen: FacadeEvent[] = [];
+    const snapshot = await backend.prompt("should not run", (event) =>
+      seen.push(event)
+    );
+
+    expect(fake.calls.filter((call) => call === "prompt")).toHaveLength(0);
+    expect(snapshot.status).toBe("aborted");
+    expect(seen).toContainEqual(
+      expect.objectContaining({
+        properties: expect.objectContaining({
+          error: expect.objectContaining({ name: "MessageAbortedError" }),
+        }),
+        type: "session.error",
+      })
+    );
+  });
+
+  test("abort landing during prompt preflight still tells Pi to stop", async () => {
+    let resolvePrompt: ((value?: unknown) => void) | undefined;
+    const fake = createFakePiSession({
+      prompt: () =>
+        new Promise((resolve) => {
+          resolvePrompt = resolve;
+        }),
+      streaming: false,
+    });
+    const backend = createFakePiBackend(
+      "pi-abort-preflight",
+      fake.session,
+      "pi abort preflight"
+    );
+    const promptSeen: FacadeEvent[] = [];
+    const hubSeen: FacadeEvent[] = [];
+    const prompt = backend.prompt("in flight", (event) =>
+      promptSeen.push(event)
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(fake.calls).toContain("prompt");
+
+    await backend.abort((event) => hubSeen.push(event));
+
+    expect(fake.calls).toContain("abort");
+    expect(fake.calls).toContain("clearQueue");
+    expect(hubSeen).toContainEqual(
+      expect.objectContaining({
+        properties: expect.objectContaining({
+          error: expect.objectContaining({ name: "MessageAbortedError" }),
+        }),
+        type: "session.error",
+      })
+    );
+
+    resolvePrompt?.();
+    const snapshot = await prompt;
+    expect(snapshot.status).toBe("aborted");
   });
 
   test("reopens a persisted Pi JSONL session", async () => {

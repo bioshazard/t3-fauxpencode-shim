@@ -37,7 +37,7 @@ export interface BackendSession {
     input: PromptInput | string,
     emit: SessionEventSink
   ): Promise<SessionSnapshot>;
-  abort(): Promise<void>;
+  abort(emit?: SessionEventSink): Promise<void>;
   update(permission: readonly JsonValue[] | undefined): Promise<void>;
   revert(messageId: string): Promise<SessionSnapshot | null>;
   dispose(): void;
@@ -238,16 +238,28 @@ class MemoryBackendSession implements BackendSession {
     return this.status === "aborted";
   }
 
-  async abort(): Promise<void> {
+  async abort(emit?: SessionEventSink): Promise<void> {
+    if (this.status === "aborted") return;
     if (this.status !== "running") {
       this.abortRequested = true;
       this.status = "aborted";
       this.updated = now();
+      logAbort(this.id, {
+        isRunning: false,
+        status: this.status,
+      });
+      if (this.activeEmit === undefined && emit !== undefined)
+        emitAbort(this.id, emit);
       return;
     }
     this.status = "aborted";
     this.updated = now();
+    logAbort(this.id, {
+      isRunning: true,
+      status: this.status,
+    });
     if (this.activeEmit !== undefined) emitAbort(this.id, this.activeEmit);
+    else if (emit !== undefined) emitAbort(this.id, emit);
   }
 
   async update(permission: readonly JsonValue[] | undefined): Promise<void> {
@@ -302,6 +314,21 @@ function emitAbort(id: string, emit: SessionEventSink): void {
     type: "session.error",
   });
   emitStatus(id, "aborted", emit);
+}
+
+function logAbort(
+  sessionID: string,
+  detail: { readonly isRunning: boolean; readonly status: string }
+): void {
+  console.log(
+    JSON.stringify({
+      event: "session.abort",
+      isStreaming: detail.isRunning,
+      sessionID,
+      status: detail.status,
+      time: new Date().toISOString(),
+    })
+  );
 }
 
 function emitMessage(
@@ -510,6 +537,14 @@ export class PiBackendSession implements BackendSession {
         );
         if (model !== undefined) await this.session.setModel(model);
       }
+      // Re-check at the step boundary: an abort that landed while the model
+      // switch was in flight must not start a new turn.
+      if (this.abortRequested) {
+        this.abortRequested = false;
+        this.status = "aborted";
+        emitAbort(this.id, emit);
+        return this.snapshot();
+      }
       const images =
         input.images.length === 0
           ? undefined
@@ -550,17 +585,22 @@ export class PiBackendSession implements BackendSession {
     return this.status === "aborted";
   }
 
-  async abort(): Promise<void> {
+  async abort(emit?: SessionEventSink): Promise<void> {
     if (this.wasAborted()) return;
-    if (!this.session.isStreaming) {
-      this.abortRequested = true;
-      this.status = "aborted";
-      if (this.activeEmit !== undefined) emitAbort(this.id, this.activeEmit);
-      return;
-    }
+    const isStreaming = this.session.isStreaming;
     this.status = "aborted";
+    // Always ask Pi to stop: while streaming this aborts the whole run
+    // (LLM steps and tool calls check the abort signal); while idle it is a
+    // safe no-op. The flag additionally cancels the next queued prompt.
+    this.abortRequested = true;
     await this.session.abort();
-    if (this.activeEmit !== undefined) emitAbort(this.id, this.activeEmit);
+    this.session.clearQueue();
+    logAbort(this.id, {
+      isRunning: isStreaming,
+      status: this.status,
+    });
+    const sink = emit ?? this.activeEmit;
+    if (sink !== undefined) emitAbort(this.id, sink);
   }
 
   async update(permission: readonly JsonValue[] | undefined): Promise<void> {
@@ -716,10 +756,13 @@ export class SessionRegistry {
     return session === null ? null : session.prompt(input, emit);
   }
 
-  async abortSession(id: string): Promise<SessionSnapshot | null> {
+  async abortSession(
+    id: string,
+    emit?: SessionEventSink
+  ): Promise<SessionSnapshot | null> {
     const session = await this.getSession(id);
     if (session === null) return null;
-    await session.abort();
+    await session.abort(emit);
     return session.snapshot();
   }
 
