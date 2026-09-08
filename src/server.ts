@@ -1,5 +1,3 @@
-import { readFile } from "node:fs/promises";
-
 import {
   createAgentSessionServices,
   DefaultResourceLoader,
@@ -89,20 +87,11 @@ async function discoverPiSkills(
   });
   await loader.reload();
   const skills = loader.getSkills().skills;
-  return Promise.all(
-    skills.map(async (skill) => {
-      try {
-        return {
-          content: await readFile(skill.filePath, "utf8"),
-          description: skill.description,
-          location: skill.filePath,
-          name: skill.name,
-        };
-      } catch {
-        return null;
-      }
-    })
-  ).then((items) => items.filter((item) => item !== null));
+  return skills.map((skill) => ({
+    description: skill.description,
+    location: `pi-skill:${skill.name}`,
+    name: skill.name,
+  }));
 }
 
 /** Enumerate the models the local pi installation can actually use. */
