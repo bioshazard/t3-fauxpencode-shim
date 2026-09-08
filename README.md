@@ -58,6 +58,14 @@ bunx t3-fauxpencode start --frpc-config ~/frpc.toml
 
 The launcher copies the TOML to its state directory, downloads the matching `frpc` binary if needed, and starts it under PM2. The token file remains where the TOML points; do not put its token in a CLI flag.
 
+Generate a pairing token for the running worker:
+
+```sh
+bun run connection
+```
+
+This uses the installed FRP config and cached T3 environment identity under `~/.local/share/t3-fauxpencode/`. If `T3_WORKER_HOME` is overridden, use the same value for lifecycle and connection commands.
+
 ## Lifecycle
 
 ```sh
