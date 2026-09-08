@@ -402,7 +402,7 @@ function createSessionHandler(
       }
       if (request.method === "POST" && operation === "/abort") {
         return sessions
-          .abortSession(sessionId)
+          .abortSession(sessionId, (event) => events.publish(event))
           .then((snapshot) =>
             snapshot === null ? notFound() : jsonResponse(true)
           );

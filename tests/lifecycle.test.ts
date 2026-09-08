@@ -198,6 +198,43 @@ describe("prompt and lifecycle facade", () => {
     });
   });
 
+  test("aborts an idle session and publishes the abort event to the event hub", async () => {
+    const { events, handler } = createTestHandler();
+    await createSession(handler, "thread-idle-abort");
+    const seen: FacadeEvent[] = [];
+    const unsubscribe = events.subscribe((event) => seen.push(event));
+
+    try {
+      const response = await handler(
+        new Request("http://shim.test/session/thread-idle-abort/abort", {
+          method: "POST",
+        })
+      );
+      expect(response.status).toBe(200);
+      expect(await response.json()).toBe(true);
+    } finally {
+      unsubscribe();
+    }
+
+    expect(seen).toContainEqual(
+      expect.objectContaining({
+        properties: expect.objectContaining({
+          error: expect.objectContaining({ name: "MessageAbortedError" }),
+        }),
+        type: "session.error",
+      })
+    );
+    expect(seen).toContainEqual(
+      expect.objectContaining({
+        properties: expect.objectContaining({
+          sessionStatus: "aborted",
+          status: { type: "idle" },
+        }),
+        type: "session.status",
+      })
+    );
+  });
+
   test("reverts a completed turn and continues from the resulting state", async () => {
     const { handler } = createTestHandler();
     await createSession(handler, "thread-revert");
