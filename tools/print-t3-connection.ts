@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+
+import { defaultWorkerHome, workerPaths } from "../src/worker.ts";
 
 type FrpcProxy = { readonly customDomains?: unknown; readonly type?: unknown };
 type FrpcConfig = { readonly proxies?: unknown };
@@ -15,7 +15,8 @@ function isString(value: unknown): value is string {
   return Object.prototype.toString.call(value) === "[object String]";
 }
 
-const configPath = process.env.PI_FRPC_CONFIG ?? join(homedir(), "frpc.toml");
+const paths = workerPaths(process.env.T3_WORKER_HOME ?? defaultWorkerHome());
+const configPath = process.env.PI_FRPC_CONFIG ?? paths.frpcConfig;
 const config = Bun.TOML.parse(readFileSync(configPath, "utf8")) as FrpcConfig;
 const proxy = (Array.isArray(config.proxies) ? config.proxies : [])
   .map(asRecord)
@@ -28,9 +29,7 @@ if (hostname === undefined) {
 }
 
 const baseUrl = process.env.T3_PUBLIC_URL ?? `https://${hostname}`;
-const baseDir =
-  process.env.T3_HOME ??
-  resolve(import.meta.dir, "..", "artifacts/t3-shim-home");
+const baseDir = process.env.T3_HOME ?? paths.t3Home;
 
 console.log(`Public URL: ${baseUrl}`);
 console.log("Fresh pairing token:");
