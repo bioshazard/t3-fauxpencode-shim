@@ -6,7 +6,7 @@ This is a provisional, Bun-native facade. It is not the captured T3 contract yet
 | --- | --- | --- |
 | Health | `GET /global/health` | JSON readiness response |
 | Provider discovery | `GET /provider` | Pi provider and configured model presentation |
-| Optional discovery | `GET /agent`, `GET /skill` | Empty lists until Pi resource discovery is captured |
+| Optional discovery | `GET /agent`, `GET /skill` | Agents are empty; skills expose names, descriptions, and opaque `pi-skill:` locations, never instruction bodies or filesystem paths |
 | Global events | `GET /event` or `GET /global/event` | SSE stream |
 | Scoped events | `GET /session/:id/event` | Session-filtered SSE stream |
 | Create | `POST /session` | Persistent Pi-backed session |

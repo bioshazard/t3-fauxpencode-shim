@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { loadConfig } from "../src/config.ts";
 import { createHandler, SSE_IDLE_TIMEOUT_SECONDS } from "../src/server.ts";
@@ -125,6 +128,39 @@ describe("health and discovery", () => {
     expect(skills.status).toBe(200);
     expect(await agents.json()).toEqual([]);
     expect(await skills.json()).toEqual(expect.any(Array));
+  });
+
+  test("exposes only skill discovery metadata", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pi-skill-discovery-"));
+    const skillDirectory = join(root, "skills", "contract-skill");
+    await mkdir(skillDirectory, { recursive: true });
+    await writeFile(
+      join(skillDirectory, "SKILL.md"),
+      `---\nname: contract-skill\ndescription: Visible discovery text.\n---\n\nSecret instructions.\n`
+    );
+
+    try {
+      const response = await createHandler({
+        ...config,
+        agentDir: root,
+        cwd: root,
+      })(new Request("http://shim.test/skill"));
+      const skills = (await response.json()) as Array<Record<string, unknown>>;
+      const skill = skills.find((item) => item.name === "contract-skill");
+
+      expect(response.status).toBe(200);
+      expect(skill).toEqual({
+        description: "Visible discovery text.",
+        location: "pi-skill:contract-skill",
+        name: "contract-skill",
+      });
+      expect(skills.every((item) => !("content" in item))).toBe(true);
+      for (const item of skills) {
+        expect(item.location).toBe(`pi-skill:${String(item.name)}`);
+      }
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
   });
 
   test("exposes empty pending interaction lists", async () => {
