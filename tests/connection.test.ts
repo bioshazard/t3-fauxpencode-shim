@@ -9,7 +9,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-test("creates pairing tokens from the persistent worker environment", async () => {
+test("creates pairing tokens from managed state or an explicit public URL", async () => {
   const root = mkdtempSync(join(tmpdir(), "t3-connection-"));
   const binaryDirectory = join(root, "bin");
   const workerHome = join(root, "worker");
@@ -60,6 +60,36 @@ test("creates pairing tokens from the persistent worker environment", async () =
     expect(stdout).toContain("Public URL: https://t3.example.test\n");
     expect(stdout).toContain(`--base-dir\n${join(workerHome, "t3")}\n`);
     expect(stdout).not.toContain("artifacts/t3-shim-home");
+
+    rmSync(frpcConfig);
+    const direct = Bun.spawn({
+      cmd: [
+        process.execPath,
+        join(import.meta.dir, "..", "bin", "t3-fauxpencode.mjs"),
+        "connection",
+      ],
+      cwd: root,
+      env: {
+        ...environment,
+        PATH: `${binaryDirectory}:${process.env.PATH ?? ""}`,
+        T3_PUBLIC_URL: "https://workspace.example.test",
+        T3_WORKER_HOME: workerHome,
+      },
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [directExitCode, directStdout, directStderr] = await Promise.all([
+      direct.exited,
+      new Response(direct.stdout).text(),
+      new Response(direct.stderr).text(),
+    ]);
+
+    expect(directStderr).toBe("");
+    expect(directExitCode).toBe(0);
+    expect(directStdout).toContain(
+      "Public URL: https://workspace.example.test\n"
+    );
+    expect(directStdout).toContain(`--base-dir\n${join(workerHome, "t3")}\n`);
   } finally {
     rmSync(root, { force: true, recursive: true });
   }

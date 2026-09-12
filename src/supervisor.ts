@@ -13,7 +13,6 @@ export type WorkerRuntimeState = {
 
 type Child = ReturnType<typeof Bun.spawn>;
 type ExitOutcome = {
-  readonly child: Child;
   readonly code: number;
   readonly kind: "exit";
   readonly spec: WorkerProcessSpec;
@@ -65,22 +64,45 @@ async function stopChildren(
   signal: NodeJS.Signals
 ): Promise<void> {
   for (const child of children) {
-    if (child.exitCode === null) child.kill(signal);
+    signalChildTree(child, signal);
   }
 
-  let timeout: ReturnType<typeof setTimeout> | undefined;
-  await Promise.race([
-    Promise.allSettled(children.map((child) => child.exited)),
-    new Promise<void>((resolve) => {
-      timeout = setTimeout(resolve, 10_000);
-    }),
-  ]);
-  if (timeout !== undefined) clearTimeout(timeout);
+  const deadline = Date.now() + 10_000;
+  while (children.some(childTreeAlive) && Date.now() < deadline) {
+    await Bun.sleep(25);
+  }
 
   for (const child of children) {
-    if (child.exitCode === null) child.kill("SIGKILL");
+    if (childTreeAlive(child)) signalChildTree(child, "SIGKILL");
   }
   await Promise.allSettled(children.map((child) => child.exited));
+}
+
+function childTreeAlive(child: Child): boolean {
+  if (process.platform === "win32") return child.exitCode === null;
+  try {
+    process.kill(-child.pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+function signalChildTree(child: Child, signal: NodeJS.Signals): void {
+  if (process.platform === "win32") {
+    if (child.exitCode === null) child.kill(signal);
+    return;
+  }
+  try {
+    process.kill(-child.pid, signal);
+  } catch (error) {
+    if (
+      (error as NodeJS.ErrnoException).code !== "ESRCH" &&
+      child.exitCode === null
+    ) {
+      child.kill(signal);
+    }
+  }
 }
 
 export async function runForeground(
@@ -105,6 +127,7 @@ export async function runForeground(
         Bun.spawn({
           cmd: [...spec.command],
           cwd: spec.cwd,
+          detached: true,
           env: { ...Bun.env, ...spec.env },
           stdin: "inherit",
           stderr: "inherit",
@@ -115,7 +138,6 @@ export async function runForeground(
     writeRuntimeState(runtimePath, specs, children);
     const exited = children.map((child, index) =>
       child.exited.then((code): ExitOutcome => ({
-        child,
         code,
         kind: "exit",
         spec: specs[index]!,

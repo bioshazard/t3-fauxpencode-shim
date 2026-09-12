@@ -28,7 +28,7 @@ t3-fauxpencode health --json
 t3-fauxpencode connection
 ```
 
-`connection` reads the managed FRP config and persistent T3 identity from `T3_WORKER_HOME`; it does not require this source checkout.
+`connection` reads the managed FRP config and persistent T3 identity from `T3_WORKER_HOME`; it does not require this source checkout. When ingress does not use FRPC, set `T3_PUBLIC_URL` to the externally reachable T3 URL before running `connection`.
 
 ## Runtime requirements
 

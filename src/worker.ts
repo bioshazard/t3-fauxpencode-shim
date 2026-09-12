@@ -26,6 +26,11 @@ export const FRPC_ARCHIVE_SHA256 = {
 } as const;
 
 export type WorkerProcessId = "frpc" | "shim" | "t3";
+export const WORKER_PROCESS_NAMES = {
+  frpc: "t3-fauxpencode-frpc",
+  shim: "t3-fauxpencode-shim",
+  t3: "t3-fauxpencode-t3",
+} as const satisfies Record<WorkerProcessId, string>;
 export type WorkerProcessSpec = {
   readonly command: readonly string[];
   readonly cwd: string;
@@ -238,7 +243,7 @@ export function workerProcessSpecs(
         PI_SESSION_DIR: paths.piHome,
       },
       id: "shim",
-      name: "t3-fauxpencode-shim",
+      name: WORKER_PROCESS_NAMES.shim,
     },
     {
       command: ["bash", join(packageRoot, "tools", "run-t3-shim.sh")],
@@ -248,7 +253,7 @@ export function workerProcessSpecs(
         T3_HOME: paths.t3Home,
       },
       id: "t3",
-      name: "t3-fauxpencode-t3",
+      name: WORKER_PROCESS_NAMES.t3,
     },
   ];
   if (frpcConfig !== undefined) {
@@ -257,7 +262,7 @@ export function workerProcessSpecs(
       cwd,
       env: {},
       id: "frpc",
-      name: "t3-fauxpencode-frpc",
+      name: WORKER_PROCESS_NAMES.frpc,
     });
   }
   return specs;

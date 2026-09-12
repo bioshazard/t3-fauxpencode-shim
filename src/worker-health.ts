@@ -5,6 +5,7 @@ import { readRuntimeState } from "./supervisor.ts";
 import {
   SHIM_PORT,
   T3_PORT,
+  WORKER_PROCESS_NAMES,
   type WorkerPaths,
   type WorkerProcessId,
 } from "./worker.ts";
@@ -136,19 +137,19 @@ export async function probeWorker(
   };
   const managedShimHealthy = componentHealthy(
     "shim",
-    "t3-fauxpencode-shim",
+    WORKER_PROCESS_NAMES.shim,
     shimHealthy
   );
   const managedT3Healthy = componentHealthy(
     "t3",
-    "t3-fauxpencode-t3",
+    WORKER_PROCESS_NAMES.t3,
     t3Healthy
   );
   const frpcRequired = existsSync(paths.frpcConfig);
   const foregroundFrpc = runtime?.children.frpc?.pid;
   const frpcHealthy = foreground
     ? foregroundFrpc !== undefined && alive(foregroundFrpc)
-    : detached.get("t3-fauxpencode-frpc") === "online";
+    : detached.get(WORKER_PROCESS_NAMES.frpc) === "online";
   const services: WorkerHealth["services"] = {
     frpc: {
       required: frpcRequired,

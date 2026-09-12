@@ -23,18 +23,35 @@ async function fixture(behavior: "fail" | "wait") {
   const runtime = join(root, "runtime.json");
   const started = (id: string) => join(root, `${id}.started`);
   const stopped = (id: string) => join(root, `${id}.stopped`);
+  const descendantStarted = started("t3-descendant");
+  const descendantStopped = stopped("t3-descendant");
   await writeFile(
     childScript,
     `import { writeFileSync } from "node:fs";
-const [id, behavior, started, stopped] = Bun.argv.slice(2);
+import { existsSync } from "node:fs";
+const [id, behavior, started, stopped, descendantStarted, descendantStopped] = Bun.argv.slice(2);
 writeFileSync(started, "started");
 console.log("child-log:" + id);
-process.on("SIGTERM", () => {
-  writeFileSync(stopped, "SIGTERM");
+for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => {
+  writeFileSync(stopped, signal);
   process.exit(0);
 });
-if (behavior === "fail") setTimeout(() => process.exit(7), 25);
-else setInterval(() => undefined, 1_000);
+if (behavior === "tree") {
+  Bun.spawn({
+    cmd: [process.execPath, import.meta.path, "t3-descendant", "wait", descendantStarted, descendantStopped],
+    stdin: "ignore",
+    stderr: "inherit",
+    stdout: "inherit",
+  });
+}
+if (behavior === "fail") {
+  const ready = setInterval(() => {
+    if (existsSync(descendantStarted)) {
+      clearInterval(ready);
+      process.exit(7);
+    }
+  }, 5);
+} else setInterval(() => undefined, 1_000);
 `
   );
   const specs: WorkerProcessSpec[] = [
@@ -46,6 +63,8 @@ else setInterval(() => undefined, 1_000);
         behavior,
         started("shim"),
         stopped("shim"),
+        descendantStarted,
+        descendantStopped,
       ],
       cwd: root,
       env: {},
@@ -57,9 +76,11 @@ else setInterval(() => undefined, 1_000);
         process.execPath,
         childScript,
         "t3",
-        "wait",
+        "tree",
         started("t3"),
         stopped("t3"),
+        descendantStarted,
+        descendantStopped,
       ],
       cwd: root,
       env: {},
@@ -76,40 +97,53 @@ const code = await runForeground(${JSON.stringify(specs)}, ${JSON.stringify(runt
 process.exitCode = code;
 `
   );
-  return { harness, root, runtime, started, stopped };
+  return {
+    descendantStarted,
+    descendantStopped,
+    harness,
+    root,
+    runtime,
+    started,
+    stopped,
+  };
 }
 
-test("foreground mode streams logs and forwards termination to every child", async () => {
-  const item = await fixture("wait");
-  try {
-    const worker = Bun.spawn({
-      cmd: [process.execPath, item.harness],
-      stderr: "pipe",
-      stdout: "pipe",
-    });
-    await Promise.all([
-      waitFor(item.started("shim")),
-      waitFor(item.started("t3")),
-      waitFor(item.runtime),
-    ]);
-    worker.kill("SIGTERM");
-    const [exitCode, stdout, stderr] = await Promise.all([
-      worker.exited,
-      new Response(worker.stdout).text(),
-      new Response(worker.stderr).text(),
-    ]);
+for (const signal of ["SIGINT", "SIGTERM"] as const) {
+  test(`foreground mode streams logs and forwards ${signal} to every process`, async () => {
+    const item = await fixture("wait");
+    try {
+      const worker = Bun.spawn({
+        cmd: [process.execPath, item.harness],
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      await Promise.all([
+        waitFor(item.started("shim")),
+        waitFor(item.started("t3")),
+        waitFor(item.descendantStarted),
+        waitFor(item.runtime),
+      ]);
+      worker.kill(signal);
+      const [exitCode, stdout, stderr] = await Promise.all([
+        worker.exited,
+        new Response(worker.stdout).text(),
+        new Response(worker.stderr).text(),
+      ]);
 
-    expect(exitCode).toBe(0);
-    expect(stdout).toContain("child-log:shim");
-    expect(stdout).toContain("child-log:t3");
-    expect(stderr).toBe("");
-    expect(await readFile(item.stopped("shim"), "utf8")).toBe("SIGTERM");
-    expect(await readFile(item.stopped("t3"), "utf8")).toBe("SIGTERM");
-    expect(existsSync(item.runtime)).toBe(false);
-  } finally {
-    await rm(item.root, { force: true, recursive: true });
-  }
-});
+      expect(exitCode).toBe(0);
+      expect(stdout).toContain("child-log:shim");
+      expect(stdout).toContain("child-log:t3");
+      expect(stdout).toContain("child-log:t3-descendant");
+      expect(stderr).toBe("");
+      expect(await readFile(item.stopped("shim"), "utf8")).toBe(signal);
+      expect(await readFile(item.stopped("t3"), "utf8")).toBe(signal);
+      expect(await readFile(item.descendantStopped, "utf8")).toBe(signal);
+      expect(existsSync(item.runtime)).toBe(false);
+    } finally {
+      await rm(item.root, { force: true, recursive: true });
+    }
+  });
+}
 
 test("foreground mode stops peers and exits nonzero when a child fails", async () => {
   const item = await fixture("fail");
@@ -128,6 +162,7 @@ test("foreground mode stops peers and exits nonzero when a child fails", async (
     expect(stdout).toContain("child-log:shim");
     expect(stdout).toContain("child-log:t3");
     expect(await readFile(item.stopped("t3"), "utf8")).toBe("SIGTERM");
+    expect(await readFile(item.descendantStopped, "utf8")).toBe("SIGTERM");
     expect(existsSync(item.runtime)).toBe(false);
   } finally {
     await rm(item.root, { force: true, recursive: true });

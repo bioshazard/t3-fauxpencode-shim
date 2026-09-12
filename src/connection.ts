@@ -16,19 +16,7 @@ function isString(value: unknown): value is string {
 }
 
 export async function printConnection(paths: WorkerPaths): Promise<void> {
-  const configPath = paths.frpcConfig;
-  const config = Bun.TOML.parse(readFileSync(configPath, "utf8")) as FrpcConfig;
-  const proxy = (Array.isArray(config.proxies) ? config.proxies : [])
-    .map(asRecord)
-    .find((value): value is FrpcProxy => value?.type === "http");
-  const hostname = Array.isArray(proxy?.customDomains)
-    ? proxy.customDomains.find(isString)
-    : undefined;
-  if (hostname === undefined) {
-    throw new Error(`No HTTP customDomains entry in ${configPath}.`);
-  }
-
-  const baseUrl = process.env.T3_PUBLIC_URL ?? `https://${hostname}`;
+  const baseUrl = process.env.T3_PUBLIC_URL ?? publicUrlFromFrpc(paths);
   const baseDir = paths.t3Home;
   console.log(`Public URL: ${baseUrl}`);
   console.log("Fresh pairing token:");
@@ -50,4 +38,19 @@ export async function printConnection(paths: WorkerPaths): Promise<void> {
   if ((await pair.exited) !== 0) {
     throw new Error("Could not create pairing token.");
   }
+}
+
+function publicUrlFromFrpc(paths: WorkerPaths): string {
+  const configPath = paths.frpcConfig;
+  const config = Bun.TOML.parse(readFileSync(configPath, "utf8")) as FrpcConfig;
+  const proxy = (Array.isArray(config.proxies) ? config.proxies : [])
+    .map(asRecord)
+    .find((value): value is FrpcProxy => value?.type === "http");
+  const hostname = Array.isArray(proxy?.customDomains)
+    ? proxy.customDomains.find(isString)
+    : undefined;
+  if (hostname === undefined) {
+    throw new Error(`No HTTP customDomains entry in ${configPath}.`);
+  }
+  return `https://${hostname}`;
 }
