@@ -23,13 +23,24 @@ test("creates pairing tokens from the persistent worker environment", async () =
   const bunx = join(binaryDirectory, "bunx");
   writeFileSync(bunx, '#!/usr/bin/env bash\nprintf "%s\\n" "$@"\n');
   chmodSync(bunx, 0o755);
+  writeFileSync(
+    join(root, ".env"),
+    "T3_HOME=/wrong/env/home\nPI_FRPC_CONFIG=/wrong/env/frpc.toml\n"
+  );
 
   try {
     const environment = { ...process.env };
     delete environment.PI_FRPC_CONFIG;
     delete environment.T3_HOME;
+    delete environment.T3_PUBLIC_URL;
+    delete environment.T3_VERSION;
     const child = Bun.spawn({
-      cmd: ["bun", "tools/print-t3-connection.ts"],
+      cmd: [
+        process.execPath,
+        "--no-env-file",
+        join(import.meta.dir, "..", "tools", "print-t3-connection.ts"),
+      ],
+      cwd: root,
       env: {
         ...environment,
         PATH: `${binaryDirectory}:${process.env.PATH ?? ""}`,

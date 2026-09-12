@@ -95,23 +95,36 @@ async function discoverPiSkills(
 }
 
 /** Enumerate the models the local pi installation can actually use. */
-async function discoverPiModels(
-  config: ShimConfig
+export async function discoverPiModels(
+  config: ShimConfig,
+  signal = AbortSignal.timeout(15_000)
 ): Promise<readonly PiAvailableModel[]> {
+  let onAbort: (() => void) | undefined;
   try {
-    const agentDir = config.agentDir ?? getAgentDir();
-    // ModelRuntime alone loads auth/models.json but not Pi extensions. Use Pi's
-    // normal service bootstrap so extension-registered dynamic providers are
-    // included in the same catalogue the Pi CLI sees.
-    const services = await createAgentSessionServices({
-      agentDir,
-      cwd: config.cwd,
-      modelRuntimeSignal: AbortSignal.timeout(15_000),
-      settingsManager: SettingsManager.create(config.cwd, agentDir),
+    signal.throwIfAborted();
+    const aborted = new Promise<never>((_resolve, reject) => {
+      onAbort = () => reject(signal.reason);
+      signal.addEventListener("abort", onAbort, { once: true });
     });
-    const registry = new ModelRegistry(services.modelRuntime);
-    await registry.refresh();
-    return registry.getAvailable();
+    const discovery = async () => {
+      const agentDir = config.agentDir ?? getAgentDir();
+      // Bootstrap Pi extensions as well as auth/models.json so dynamic providers
+      // appear in the same catalogue the Pi CLI sees.
+      const services = await createAgentSessionServices({
+        agentDir,
+        cwd: config.cwd,
+        modelRuntimeSignal: signal,
+        settingsManager: SettingsManager.create(config.cwd, agentDir),
+      });
+      signal.throwIfAborted();
+      const registry = new ModelRegistry(services.modelRuntime);
+      await registry.refresh({ signal });
+      signal.throwIfAborted();
+      return registry.getAvailable();
+    };
+    // The SDK only applies modelRuntimeSignal to initial runtime creation.
+    // Bound extension bootstrap and the final refresh even if they ignore it.
+    return await Promise.race([discovery(), aborted]);
   } catch (error) {
     console.error(
       `pi model discovery failed: ${
@@ -119,6 +132,8 @@ async function discoverPiModels(
       }`
     );
     return [];
+  } finally {
+    if (onAbort !== undefined) signal.removeEventListener("abort", onAbort);
   }
 }
 

@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,20 +7,56 @@ import { loadConfig } from "../src/config.ts";
 import { createHandler, SSE_IDLE_TIMEOUT_SECONDS } from "../src/server.ts";
 import type { ShimConfig } from "../src/types.ts";
 
-const config: ShimConfig = {
-  agentDir: undefined,
-  allowedRoots: [process.cwd()],
-  cwd: process.cwd(),
-  host: "127.0.0.1",
-  modelId: "test-model",
-  port: 4096,
-  providerId: "pi",
-  sessionDir: undefined,
-  version: "test",
-};
+let root: string;
+let config: ShimConfig;
+let handler: ReturnType<typeof createHandler>;
+
+beforeAll(async () => {
+  root = await mkdtemp(join(tmpdir(), "pi-health-discovery-"));
+  const agentDir = join(root, "agent");
+  const extensions = join(agentDir, "extensions");
+  await mkdir(extensions, { recursive: true });
+  await writeFile(
+    join(extensions, "fixture-provider.ts"),
+    `export default (pi) => {
+      pi.registerProvider("fixture-provider", {
+        api: "openai-completions",
+        apiKey: "fixture-key",
+        baseUrl: "http://fixture.invalid/v1",
+        async refreshModels() {
+          return [{
+            id: "fixture-model",
+            name: "Fixture Model",
+            reasoning: false,
+            input: ["text"],
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+            contextWindow: 4096,
+            maxTokens: 1024
+          }];
+        }
+      });
+    };`
+  );
+  config = {
+    agentDir,
+    allowedRoots: [root],
+    cwd: root,
+    host: "127.0.0.1",
+    modelId: "test-model",
+    port: 4096,
+    providerId: "pi",
+    sessionDir: undefined,
+    version: "test",
+  };
+  handler = createHandler(config);
+});
+
+afterAll(async () => {
+  await rm(root, { force: true, recursive: true });
+});
 
 const request = async (path: string, method = "GET") =>
-  createHandler(config)(new Request(`http://shim.test${path}`, { method }));
+  handler(new Request(`http://shim.test${path}`, { method }));
 
 describe("health and discovery", () => {
   test("loads a T3-compatible OpenCode health version", () => {
@@ -90,6 +126,15 @@ describe("health and discovery", () => {
       name: "test-model",
       providerID: "pi",
     });
+    expect(body.connected).toContain("fixture-provider");
+    const dynamic = body.all.find(
+      (provider) => provider.id === "fixture-provider"
+    );
+    expect(dynamic?.models["fixture-model"]).toMatchObject({
+      id: "fixture-model",
+      name: "Fixture Model",
+      providerID: "fixture-provider",
+    });
     // Every discovered model belongs to its provider and stays selectable.
     for (const provider of body.all) {
       expect(provider.env).toEqual([]);
@@ -140,11 +185,15 @@ describe("health and discovery", () => {
     );
 
     try {
-      const response = await createHandler({
+      const fixtureHandler = createHandler({
         ...config,
         agentDir: root,
         cwd: root,
-      })(new Request("http://shim.test/skill"));
+      });
+      const [response] = await Promise.all([
+        fixtureHandler(new Request("http://shim.test/skill")),
+        fixtureHandler(new Request("http://shim.test/provider")),
+      ]);
       const skills = (await response.json()) as Array<Record<string, unknown>>;
       const skill = skills.find((item) => item.name === "contract-skill");
 
@@ -175,7 +224,7 @@ describe("health and discovery", () => {
 
   test("fails explicitly for unknown routes and malformed work", async () => {
     const unknown = await request("/not-in-contract");
-    const session = await createHandler(config)(
+    const session = await handler(
       new Request("http://shim.test/session", {
         body: "not-json",
         method: "POST",
