@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   copyFileSync,
   existsSync,
@@ -12,14 +13,41 @@ import { basename, dirname, join, resolve } from "node:path";
 
 export const SHIM_PORT = 41874;
 export const T3_PORT = 3773;
+export const FRPC_VERSION = "0.71.0";
+export const FRPC_ARCHIVE_SHA256 = {
+  "darwin-amd64":
+    "1b1b4e2f1836e21e8733f1dddaacd4ed9ae67d7dbee39046b9d7b7eda6253637",
+  "darwin-arm64":
+    "45be02b186860d375ed49a8941ae9569628a54bf14e67fc36b29c98c99dabcc6",
+  "linux-amd64":
+    "84f27e39f11169f7adcef8e8b70c9329de17747b1f14dad9fb95eef5682ea716",
+  "linux-arm64":
+    "f33c293c275d8fc68c654b6fba8f10b2551d6463d09a9fc9cffb7227eae82266",
+} as const;
+
+export type WorkerProcessId = "frpc" | "shim" | "t3";
+export const WORKER_PROCESS_NAMES = {
+  frpc: "t3-fauxpencode-frpc",
+  shim: "t3-fauxpencode-shim",
+  t3: "t3-fauxpencode-t3",
+} as const satisfies Record<WorkerProcessId, string>;
+export type WorkerProcessSpec = {
+  readonly command: readonly string[];
+  readonly cwd: string;
+  readonly env: Readonly<Record<string, string>>;
+  readonly id: WorkerProcessId;
+  readonly name: string;
+};
 
 export type WorkerPaths = {
   readonly ecosystem: string;
   readonly frpc: string;
   readonly frpcConfig: string;
+  readonly frpcVersion: string;
   readonly home: string;
   readonly pm2Home: string;
   readonly piHome: string;
+  readonly runtime: string;
   readonly t3Home: string;
 };
 
@@ -32,9 +60,11 @@ export function workerPaths(home = defaultWorkerHome()): WorkerPaths {
     ecosystem: join(home, "pm2", "ecosystem.config.cjs"),
     frpc: join(home, "frp", "frpc"),
     frpcConfig: join(home, "frp", "frpc.toml"),
+    frpcVersion: join(home, "frp", "version"),
     home,
     pm2Home: join(home, "pm2"),
     piHome: join(home, "pi"),
+    runtime: join(home, "runtime.json"),
     t3Home: join(home, "t3"),
   };
 }
@@ -102,8 +132,29 @@ function frpcArchiveName(version: string): string {
   return `frp_${version}_${platform}_${architecture}.tar.gz`;
 }
 
+function frpcPlatformKey(): keyof typeof FRPC_ARCHIVE_SHA256 {
+  const platform = process.platform === "darwin" ? "darwin" : "linux";
+  const architecture = process.arch === "arm64" ? "arm64" : "amd64";
+  return `${platform}-${architecture}`;
+}
+
+export function verifyFileSha256(path: string, expected: string): void {
+  const actual = createHash("sha256").update(readFileSync(path)).digest("hex");
+  if (actual !== expected) {
+    throw new Error(
+      `FRPC archive checksum mismatch: expected ${expected}, received ${actual}.`
+    );
+  }
+}
+
 export async function ensureFrpc(paths: WorkerPaths): Promise<void> {
-  if (existsSync(paths.frpc)) return;
+  if (
+    existsSync(paths.frpc) &&
+    existsSync(paths.frpcVersion) &&
+    readFileSync(paths.frpcVersion, "utf8").trim() === FRPC_VERSION
+  ) {
+    return;
+  }
   if (process.platform !== "darwin" && process.platform !== "linux") {
     throw new Error(
       `Automatic frpc download is unsupported on ${process.platform}.`
@@ -114,24 +165,9 @@ export async function ensureFrpc(paths: WorkerPaths): Promise<void> {
       `Automatic frpc download is unsupported on ${process.arch}.`
     );
   }
-  const release = await fetch(
-    "https://api.github.com/repos/fatedier/frp/releases/latest",
-    { headers: { Accept: "application/vnd.github+json" } }
-  );
-  if (!release.ok)
-    throw new Error(`Could not find an FRP release (${release.status}).`);
-  const body = (await release.json()) as { tag_name?: unknown };
-  const tag = body.tag_name;
-  const version =
-    Object.prototype.toString.call(tag) === "[object String]"
-      ? String(tag).replace(/^v/u, "")
-      : "";
-  if (!/^\d+\.\d+\.\d+(?:[-.][a-zA-Z0-9]+)*$/u.test(version)) {
-    throw new Error("Latest FRP release returned an invalid version.");
-  }
-  const archive = frpcArchiveName(version);
+  const archive = frpcArchiveName(FRPC_VERSION);
   const archivePath = join(paths.home, archive);
-  const extractPath = join(paths.home, `.frp-${version}-${Date.now()}`);
+  const extractPath = join(paths.home, `.frp-${FRPC_VERSION}-${Date.now()}`);
   try {
     console.log(`Downloading ${archive}...`);
     const download = Bun.spawn({
@@ -145,7 +181,7 @@ export async function ensureFrpc(paths: WorkerPaths): Promise<void> {
         "--show-error",
         "--output",
         archivePath,
-        `https://github.com/fatedier/frp/releases/download/v${version}/${archive}`,
+        `https://github.com/fatedier/frp/releases/download/v${FRPC_VERSION}/${archive}`,
       ],
       stderr: "inherit",
       stdout: "inherit",
@@ -153,6 +189,7 @@ export async function ensureFrpc(paths: WorkerPaths): Promise<void> {
     if ((await download.exited) !== 0) {
       throw new Error(`Could not download ${archive}.`);
     }
+    verifyFileSha256(archivePath, FRPC_ARCHIVE_SHA256[frpcPlatformKey()]);
     mkdirSync(extractPath, { recursive: true });
     const unpack = Bun.spawn({
       cmd: ["tar", "-xzf", archivePath, "-C", extractPath],
@@ -164,10 +201,71 @@ export async function ensureFrpc(paths: WorkerPaths): Promise<void> {
     if (!existsSync(binary))
       throw new Error("FRP archive did not contain frpc.");
     renameSync(binary, paths.frpc);
+    writeFileSync(paths.frpcVersion, `${FRPC_VERSION}\n`);
   } finally {
     rmSync(archivePath, { force: true });
     rmSync(extractPath, { force: true, recursive: true });
   }
+}
+
+function allowedSessionRoots(
+  paths: WorkerPaths,
+  cwd: string,
+  allowedRoots: string
+): string {
+  return Array.from(
+    new Set([
+      ...(allowedRoots.trim().length > 0 ? allowedRoots : cwd)
+        .split(",")
+        .map((root) => root.trim())
+        .filter((root) => root.length > 0),
+      t3WorktreesRoot(paths),
+    ])
+  ).join(",");
+}
+
+export function workerProcessSpecs(
+  paths: WorkerPaths,
+  cwd: string,
+  packageRoot: string,
+  frpcConfig: string | undefined,
+  allowedRoots = cwd
+): readonly WorkerProcessSpec[] {
+  const specs: WorkerProcessSpec[] = [
+    {
+      command: [process.execPath, join(packageRoot, "src", "server.ts")],
+      cwd,
+      env: {
+        PI_ALLOWED_ROOTS: allowedSessionRoots(paths, cwd, String(allowedRoots)),
+        PI_CWD: cwd,
+        PI_OPENCODE_HOST: "127.0.0.1",
+        PI_OPENCODE_PORT: String(SHIM_PORT),
+        PI_SESSION_DIR: paths.piHome,
+      },
+      id: "shim",
+      name: WORKER_PROCESS_NAMES.shim,
+    },
+    {
+      command: ["bash", join(packageRoot, "tools", "run-t3-shim.sh")],
+      cwd,
+      env: {
+        PI_OPENCODE_URL: `http://127.0.0.1:${SHIM_PORT}`,
+        T3_HOME: paths.t3Home,
+      },
+      id: "t3",
+      name: WORKER_PROCESS_NAMES.t3,
+    },
+  ];
+  if (frpcConfig !== undefined) {
+    specs.push({
+      command: [paths.frpc, "-c", frpcConfig],
+      cwd,
+      env: {},
+      id: "frpc",
+      name: WORKER_PROCESS_NAMES.frpc,
+    });
+  }
+  return specs;
 }
 
 export function writeEcosystem(
@@ -177,60 +275,26 @@ export function writeEcosystem(
   frpcConfig: string | undefined,
   allowedRoots = cwd
 ): void {
-  // T3 runs threads inside worktrees under the worker home, so the worktrees
-  // root must always be an allowed session root, independent of PI_ALLOWED_ROOTS.
-  const configured = String(allowedRoots);
-  const roots = Array.from(
-    new Set([
-      ...(configured.trim().length > 0 ? configured : cwd)
-        .split(",")
-        .map((root) => root.trim())
-        .filter((root) => root.length > 0),
-      t3WorktreesRoot(paths),
-    ])
-  );
-  const apps: Array<Record<string, unknown>> = [
-    {
-      args: [join(packageRoot, "src", "server.ts")],
+  // PM2 and foreground mode consume the same process graph.
+  const apps = workerProcessSpecs(
+    paths,
+    cwd,
+    packageRoot,
+    frpcConfig,
+    allowedRoots
+  ).map((spec) => {
+    const [script, ...args] = spec.command;
+    return {
+      args,
       autorestart: true,
-      cwd,
-      env: {
-        PI_ALLOWED_ROOTS: roots.join(","),
-        PI_CWD: cwd,
-        PI_OPENCODE_HOST: "127.0.0.1",
-        PI_OPENCODE_PORT: String(SHIM_PORT),
-        PI_SESSION_DIR: paths.piHome,
-      },
+      cwd: spec.cwd,
+      env: spec.env,
       exec_interpreter: "none",
-      name: "t3-fauxpencode-shim",
-      script: process.execPath,
+      name: spec.name,
+      script,
       watch: false,
-    },
-    {
-      args: [join(packageRoot, "tools", "run-t3-shim.sh")],
-      autorestart: true,
-      cwd,
-      env: {
-        PI_OPENCODE_URL: `http://127.0.0.1:${SHIM_PORT}`,
-        T3_HOME: paths.t3Home,
-      },
-      exec_interpreter: "none",
-      name: "t3-fauxpencode-t3",
-      script: "bash",
-      watch: false,
-    },
-  ];
-  if (frpcConfig !== undefined) {
-    apps.push({
-      args: ["-c", frpcConfig],
-      autorestart: true,
-      cwd,
-      exec_interpreter: "none",
-      name: "t3-fauxpencode-frpc",
-      script: paths.frpc,
-      watch: false,
-    });
-  }
+    };
+  });
   writeFileSync(
     paths.ecosystem,
     `module.exports = ${JSON.stringify({ apps }, null, 2)};\n`

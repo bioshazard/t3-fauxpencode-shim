@@ -4,6 +4,8 @@ See [`docs/poc.md`](docs/poc.md) for the provisional facade surface and known ca
 
 Single-machine Bun launcher for an isolated T3 worker backed by Pi sessions. It exposes the OpenCode-shaped surface T3 needs; PM2 and optional FRP are implementation details.
 
+For a container or workspace supervisor, see [`docs/container.md`](docs/container.md).
+
 ## Run
 
 Run it from the project directory T3 will use. The current directory is the one permitted session root; there are no repo or worker-name flags.
@@ -63,7 +65,7 @@ The launcher copies the TOML to its state directory, downloads the matching `frp
 Generate a pairing token for the running worker:
 
 ```sh
-bun run connection
+t3-fauxpencode connection
 ```
 
 This uses the installed FRP config and cached T3 environment identity under `~/.local/share/t3-fauxpencode/`. If `T3_WORKER_HOME` is overridden, use the same value for lifecycle and connection commands.
@@ -71,12 +73,17 @@ This uses the installed FRP config and cached T3 environment identity under `~/.
 ## Lifecycle
 
 ```sh
+bunx t3-fauxpencode@latest run
+bunx t3-fauxpencode@latest health --json
+bunx t3-fauxpencode@latest connection
 bunx t3-fauxpencode@latest start
 bunx t3-fauxpencode@latest stop
 bunx t3-fauxpencode@latest restart
 bunx t3-fauxpencode@latest status
 bunx t3-fauxpencode@latest logs
 ```
+
+`run` is the foreground/container entrypoint. `start`, `restart`, `stop`, `status`, and `logs` retain the detached PM2 workflow.
 
 Publish the package to npm for the `bunx t3-fauxpencode` form. The release workflow in [publish.yml](.github/workflows/publish.yml) uses npm trusted publishing after its one-time setup.
 

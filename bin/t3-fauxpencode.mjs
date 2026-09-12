@@ -2,4 +2,4 @@
 
 import { runCli } from "../src/cli.ts";
 
-await runCli();
+process.exitCode = await runCli();

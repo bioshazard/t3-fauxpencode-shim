@@ -11,6 +11,7 @@
   },
   "files": [
     "bin",
+    "docs/container.md",
     "src",
     "tools/run-t3-shim.sh",
     "tools/write-t3-shim-settings.ts"
