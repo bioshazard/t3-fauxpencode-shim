@@ -8,6 +8,9 @@ const repoDir = __dirname;
 const localEnvPath = join(repoDir, ".env");
 if (existsSync(localEnvPath)) process.loadEnvFile?.(localEnvPath);
 const allowedRoots = process.env.PI_ALLOWED_ROOTS ?? repoDir;
+const t3Home =
+  process.env.T3_HOME ??
+  join(homedir(), ".local", "share", "t3-fauxpencode", "t3");
 
 const apps = [
   {
@@ -33,6 +36,7 @@ const apps = [
     watch: false,
     env: {
       PI_OPENCODE_URL: "http://127.0.0.1:41874",
+      T3_HOME: t3Home,
     },
   },
 ];
