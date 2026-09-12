@@ -9,8 +9,10 @@ Single-machine Bun launcher for an isolated T3 worker backed by Pi sessions. It 
 Run it from the project directory T3 will use. The current directory is the one permitted session root; there are no repo or worker-name flags.
 
 ```sh
-bunx t3-fauxpencode start
+bunx t3-fauxpencode@latest start
 ```
+
+Use `@latest` to select the latest published npm release. Commits on `main` become available through this command after a release is published.
 
 The launcher stores its singleton state under `~/.local/share/t3-fauxpencode/` (override only for testing with `T3_WORKER_HOME`). It starts PM2-managed shim and T3 processes. The T3 settings are isolated from a normal T3 installation.
 
@@ -19,7 +21,7 @@ The launcher stores its singleton state under `~/.local/share/t3-fauxpencode/` (
 Pass a complete client configuration on the first start:
 
 ```sh
-bunx t3-fauxpencode start --frpc-config ~/frpc.toml
+bunx t3-fauxpencode@latest start --frpc-config ~/frpc.toml
 ```
 
 The config is copied to the worker state directory and enables a third PM2 process. On its first use, the launcher downloads the matching official `frpc` binary for macOS/Linux `amd64` or `arm64`.
@@ -53,7 +55,7 @@ customDomains = ["home.workers.example.com"]
 Replace the server address, token-file path, and public hostname. Point that hostname's DNS record at the FRP server. The FRP server must have HTTP virtual-host support enabled (its `vhostHTTPPort`), and must use the same token authentication. Terminate TLS at the FRP server or its edge proxy: hosted T3 needs the public endpoint over HTTPS/WSS. Then start the worker:
 
 ```sh
-bunx t3-fauxpencode start --frpc-config ~/frpc.toml
+bunx t3-fauxpencode@latest start --frpc-config ~/frpc.toml
 ```
 
 The launcher copies the TOML to its state directory, downloads the matching `frpc` binary if needed, and starts it under PM2. The token file remains where the TOML points; do not put its token in a CLI flag.
@@ -69,11 +71,11 @@ This uses the installed FRP config and cached T3 environment identity under `~/.
 ## Lifecycle
 
 ```sh
-bunx t3-fauxpencode start
-bunx t3-fauxpencode stop
-bunx t3-fauxpencode restart
-bunx t3-fauxpencode status
-bunx t3-fauxpencode logs
+bunx t3-fauxpencode@latest start
+bunx t3-fauxpencode@latest stop
+bunx t3-fauxpencode@latest restart
+bunx t3-fauxpencode@latest status
+bunx t3-fauxpencode@latest logs
 ```
 
 Publish the package to npm for the `bunx t3-fauxpencode` form. The release workflow in [publish.yml](.github/workflows/publish.yml) uses npm trusted publishing after its one-time setup.
