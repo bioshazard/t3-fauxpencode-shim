@@ -1,6 +1,6 @@
 {
   "name": "t3-fauxpencode",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "private": false,
   "repository": {
     "type": "git",
@@ -48,12 +48,14 @@
     "prepare": "lefthook install"
   },
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "0.84.4"
+    "@earendil-works/pi-coding-agent": "0.84.4",
+    "proper-lockfile": "4.1.2"
   },
   "devDependencies": {
     "@oxlint/plugins": "1.80.0",
     "@playwright/test": "1.62.1",
     "@types/bun": "1.4.0",
+    "@types/proper-lockfile": "4.1.4",
     "lefthook": "2.1.12",
     "oxfmt": "0.65.0",
     "oxlint": "1.80.0",

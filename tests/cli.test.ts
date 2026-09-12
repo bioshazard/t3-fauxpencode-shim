@@ -169,4 +169,22 @@ describe("CLI options", () => {
     expect(launcher).toContain('exec "${keep_awake[@]}" bunx');
     expect(launcher).toContain("t3@${T3_VERSION:-0.0.39}");
   });
+
+  test("launches T3 on the health and tunnel endpoint without a browser", () => {
+    const launcher = readFileSync("tools/run-t3-shim.sh", "utf8");
+    expect(launcher).toContain(
+      't3_args=(--base-dir "$t3_home" --host 127.0.0.1 --port 3773 --no-browser)'
+    );
+    expect(launcher).toContain(
+      'bunx "t3@${T3_VERSION:-0.0.39}" "${t3_args[@]}"'
+    );
+  });
+
+  test("container guidance installs Git for T3 worktrees", () => {
+    const guide = readFileSync("docs/container.md", "utf8");
+    expect(guide).toContain("Bun, Bash, and Git are required.");
+    expect(guide).toContain(
+      "apt-get install -y --no-install-recommends bash ca-certificates curl git tar"
+    );
+  });
 });

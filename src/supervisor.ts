@@ -1,14 +1,27 @@
+import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 
+import * as lockfile from "proper-lockfile";
+
+import { isString } from "./decode.ts";
+import { processAlive, processStartToken } from "./process.ts";
 import type { WorkerProcessId, WorkerProcessSpec } from "./worker.ts";
 
 export type WorkerRuntimeState = {
   readonly children: Partial<
     Record<WorkerProcessId, { readonly name: string; readonly pid: number }>
   >;
+  readonly instanceId: string;
   readonly mode: "foreground";
+  readonly processStartToken: string;
   readonly startedAt: string;
   readonly supervisorPid: number;
+};
+type WorkerRuntimeLease = {
+  readonly compromised: Promise<LockOutcome>;
+  readonly instanceId: string;
+  readonly processStartToken: string;
+  readonly release: () => Promise<void>;
 };
 
 type Child = ReturnType<typeof Bun.spawn>;
@@ -21,12 +34,24 @@ type SignalOutcome = {
   readonly kind: "signal";
   readonly signal: NodeJS.Signals;
 };
+type LockOutcome = {
+  readonly error: Error;
+  readonly kind: "lock-error";
+};
+
+const RUNTIME_LOCK_STALE_MS = 30_000;
 
 export function readRuntimeState(path: string): WorkerRuntimeState | undefined {
   if (!existsSync(path)) return undefined;
   try {
     const value = JSON.parse(readFileSync(path, "utf8")) as WorkerRuntimeState;
-    return value.mode === "foreground" && Number.isInteger(value.supervisorPid)
+    return value.mode === "foreground" &&
+      isString(value.instanceId) &&
+      value.instanceId.length > 0 &&
+      isString(value.processStartToken) &&
+      value.processStartToken.length > 0 &&
+      Number.isInteger(value.supervisorPid) &&
+      value.supervisorPid > 0
       ? value
       : undefined;
   } catch {
@@ -34,8 +59,70 @@ export function readRuntimeState(path: string): WorkerRuntimeState | undefined {
   }
 }
 
+export async function readActiveRuntimeState(
+  runtimePath: string,
+  alive: (pid: number) => boolean = processAlive,
+  startToken: (pid: number) => string | undefined = processStartToken
+): Promise<WorkerRuntimeState | undefined> {
+  const runtime = readRuntimeState(runtimePath);
+  if (
+    runtime === undefined ||
+    !alive(runtime.supervisorPid) ||
+    startToken(runtime.supervisorPid) !== runtime.processStartToken
+  ) {
+    return undefined;
+  }
+  const locked = await lockfile.check(runtimePath, {
+    realpath: false,
+    stale: RUNTIME_LOCK_STALE_MS,
+  });
+  return locked ? runtime : undefined;
+}
+
+async function acquireRuntimeLease(
+  runtimePath: string
+): Promise<WorkerRuntimeLease> {
+  const startToken = processStartToken(process.pid);
+  if (startToken === undefined) {
+    throw new Error("Cannot identify the worker supervisor process.");
+  }
+  let resolveCompromised: (outcome: LockOutcome) => void = () => undefined;
+  const compromised = new Promise<LockOutcome>((resolve) => {
+    resolveCompromised = resolve;
+  });
+  let release: () => Promise<void>;
+  try {
+    release = await lockfile.lock(runtimePath, {
+      onCompromised: (error) =>
+        resolveCompromised({ error, kind: "lock-error" }),
+      realpath: false,
+      retries: 0,
+      stale: RUNTIME_LOCK_STALE_MS,
+      update: 10_000,
+    });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ELOCKED") {
+      const owner = readRuntimeState(runtimePath);
+      throw new Error(
+        owner === undefined
+          ? "Worker is already running."
+          : `Worker is already running with PID ${owner.supervisorPid}.`
+      );
+    }
+    throw error;
+  }
+  rmSync(runtimePath, { force: true });
+  return {
+    compromised,
+    instanceId: randomUUID(),
+    processStartToken: startToken,
+    release,
+  };
+}
+
 function writeRuntimeState(
   path: string,
+  lease: WorkerRuntimeLease,
   specs: readonly WorkerProcessSpec[],
   children: readonly Child[]
 ): void {
@@ -46,16 +133,29 @@ function writeRuntimeState(
         { name: spec.name, pid: children[index]!.pid },
       ])
     ),
+    instanceId: lease.instanceId,
     mode: "foreground",
+    processStartToken: lease.processStartToken,
     startedAt: new Date().toISOString(),
     supervisorPid: process.pid,
   };
   writeFileSync(path, `${JSON.stringify(state, null, 2)}\n`);
 }
 
-function removeOwnedRuntimeState(path: string): void {
-  if (readRuntimeState(path)?.supervisorPid === process.pid) {
-    rmSync(path, { force: true });
+function removeOwnedRuntimeState(
+  runtimePath: string,
+  lease: WorkerRuntimeLease
+): void {
+  if (readRuntimeState(runtimePath)?.instanceId === lease.instanceId) {
+    rmSync(runtimePath, { force: true });
+  }
+}
+
+async function releaseRuntimeLease(lease: WorkerRuntimeLease): Promise<void> {
+  try {
+    await lease.release();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ERELEASED") throw error;
   }
 }
 
@@ -111,15 +211,24 @@ export async function runForeground(
 ): Promise<number> {
   if (specs.length === 0) throw new Error("Worker process graph is empty.");
 
+  const lease = await acquireRuntimeLease(runtimePath);
   const children: Child[] = [];
+  let shuttingDown = false;
   let resolveSignal: (outcome: SignalOutcome) => void = () => undefined;
   const signaled = new Promise<SignalOutcome>((resolve) => {
     resolveSignal = resolve;
   });
-  const onSigint = () => resolveSignal({ kind: "signal", signal: "SIGINT" });
-  const onSigterm = () => resolveSignal({ kind: "signal", signal: "SIGTERM" });
-  process.once("SIGINT", onSigint);
-  process.once("SIGTERM", onSigterm);
+  const onSignal = (signal: NodeJS.Signals) => {
+    if (shuttingDown) {
+      for (const child of children) signalChildTree(child, signal);
+      return;
+    }
+    resolveSignal({ kind: "signal", signal });
+  };
+  const onSigint = () => onSignal("SIGINT");
+  const onSigterm = () => onSignal("SIGTERM");
+  process.on("SIGINT", onSigint);
+  process.on("SIGTERM", onSigterm);
 
   try {
     for (const spec of specs) {
@@ -135,7 +244,7 @@ export async function runForeground(
         })
       );
     }
-    writeRuntimeState(runtimePath, specs, children);
+    writeRuntimeState(runtimePath, lease, specs, children);
     const exited = children.map((child, index) =>
       child.exited.then((code): ExitOutcome => ({
         code,
@@ -143,12 +252,23 @@ export async function runForeground(
         spec: specs[index]!,
       }))
     );
-    const outcome = await Promise.race([signaled, ...exited]);
+    const outcome = await Promise.race([
+      signaled,
+      lease.compromised,
+      ...exited,
+    ]);
+    shuttingDown = true;
     await stopChildren(
       children,
       outcome.kind === "signal" ? outcome.signal : "SIGTERM"
     );
     if (outcome.kind === "signal") return 0;
+    if (outcome.kind === "lock-error") {
+      console.error(
+        `Worker runtime lock was compromised: ${outcome.error.message}`
+      );
+      return 1;
+    }
     if (outcome.code === 0) {
       console.error(`${outcome.spec.name} stopped unexpectedly.`);
       return 1;
@@ -156,9 +276,14 @@ export async function runForeground(
     console.error(`${outcome.spec.name} exited with code ${outcome.code}.`);
     return outcome.code;
   } finally {
-    process.off("SIGINT", onSigint);
-    process.off("SIGTERM", onSigterm);
-    await stopChildren(children, "SIGTERM");
-    removeOwnedRuntimeState(runtimePath);
+    shuttingDown = true;
+    try {
+      await stopChildren(children, "SIGTERM");
+    } finally {
+      process.off("SIGINT", onSigint);
+      process.off("SIGTERM", onSigterm);
+      removeOwnedRuntimeState(runtimePath, lease);
+      await releaseRuntimeLease(lease);
+    }
   }
 }

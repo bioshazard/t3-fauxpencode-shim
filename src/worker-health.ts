@@ -1,7 +1,9 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { readRuntimeState } from "./supervisor.ts";
+import { asRecord, isString } from "./decode.ts";
+import { processAlive } from "./process.ts";
+import { readActiveRuntimeState } from "./supervisor.ts";
 import {
   SHIM_PORT,
   T3_PORT,
@@ -30,27 +32,13 @@ type Fetcher = (
 
 type ProbeOptions = {
   readonly fetch?: Fetcher;
+  readonly pm2?: {
+    readonly command: readonly string[];
+    readonly timeoutMs: number;
+  };
   readonly processAlive?: (pid: number) => boolean;
+  readonly processStartToken?: (pid: number) => string | undefined;
 };
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return Object.prototype.toString.call(value) === "[object Object]"
-    ? (value as Record<string, unknown>)
-    : undefined;
-}
-
-function isString(value: unknown): value is string {
-  return Object.prototype.toString.call(value) === "[object String]";
-}
-
-function processAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "EPERM";
-  }
-}
 
 async function probeHttp(
   fetcher: Fetcher,
@@ -72,17 +60,21 @@ async function probeHttp(
 
 async function detachedStates(
   paths: WorkerPaths,
-  alive: (pid: number) => boolean
+  alive: (pid: number) => boolean,
+  command: readonly string[],
+  timeoutMs: number
 ): Promise<ReadonlyMap<string, string>> {
   const pm2Pid = join(paths.pm2Home, "pm2.pid");
   if (!existsSync(pm2Pid)) return new Map();
   const pid = Number(readFileSync(pm2Pid, "utf8").trim());
   if (!Number.isInteger(pid) || !alive(pid)) return new Map();
   const child = Bun.spawn({
-    cmd: ["bunx", "pm2@7.0.4", "jlist"],
+    cmd: [...command],
     env: { ...Bun.env, PM2_HOME: paths.pm2Home },
+    killSignal: "SIGKILL",
     stderr: "ignore",
     stdout: "pipe",
+    timeout: timeoutMs,
   });
   const [code, output] = await Promise.all([
     child.exited,
@@ -110,9 +102,20 @@ export async function probeWorker(
 ): Promise<WorkerHealth> {
   const fetcher = options.fetch ?? fetch;
   const alive = options.processAlive ?? processAlive;
-  const runtime = readRuntimeState(paths.runtime);
-  const foreground = runtime !== undefined && alive(runtime.supervisorPid);
-  const detached = foreground ? new Map() : await detachedStates(paths, alive);
+  const runtime = await readActiveRuntimeState(
+    paths.runtime,
+    alive,
+    options.processStartToken
+  );
+  const foreground = runtime !== undefined;
+  const detached = foreground
+    ? new Map()
+    : await detachedStates(
+        paths,
+        alive,
+        options.pm2?.command ?? ["bunx", "pm2@7.0.4", "jlist"],
+        options.pm2?.timeoutMs ?? 2_000
+      );
   const mode = foreground
     ? "foreground"
     : detached.size > 0

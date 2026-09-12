@@ -32,7 +32,7 @@ t3-fauxpencode connection
 
 ## Runtime requirements
 
-- Bun and Bash are required.
+- Bun, Bash, and Git are required. T3 uses Git for project and worktree operations.
 - `curl`, `tar`, and CA certificates are required for the first FRPC installation.
 - Outbound npm access is required when Bun first resolves the pinned T3 package.
 - The project working directory must be writable for agent work.
@@ -46,7 +46,7 @@ This image uses the foreground supervisor directly; PM2 and a long-lived shell a
 FROM oven/bun:1.4.0
 
 RUN apt-get update \
- && apt-get install -y --no-install-recommends bash ca-certificates curl tar \
+ && apt-get install -y --no-install-recommends bash ca-certificates curl git tar \
  && rm -rf /var/lib/apt/lists/* \
  && bun install --global t3-fauxpencode@latest
 
@@ -64,3 +64,10 @@ For FRPC, mount its TOML and change the command to:
 ```dockerfile
 CMD ["t3-fauxpencode", "run", "--frpc-config", "/etc/t3-fauxpencode/frpc.toml"]
 ```
+
+## Deployment boundary
+
+- A worker in a Coder workspace stops with that workspace. Use Coder for temporary or interactive workers.
+- For an always-on worker, run the same image as a dedicated Kubernetes Deployment or under another independent supervisor.
+- Workspace-local `T3_WORKER_HOME` state disappears when that storage is deleted. Use a backed-up PVC or equivalent durable volume when T3 identity, sessions, or FRPC state must survive.
+- The platform must inject the FRP token/config and Pi provider credentials as secrets. It must also permit outbound TCP from FRPC to the configured FRPS endpoint (TCP 7000 in the example configuration). This package does not create infrastructure policy or secrets.

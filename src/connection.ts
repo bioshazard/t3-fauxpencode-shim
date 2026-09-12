@@ -1,19 +1,10 @@
 import { readFileSync } from "node:fs";
 
+import { asRecord, isString } from "./decode.ts";
 import type { WorkerPaths } from "./worker.ts";
 
 type FrpcProxy = { readonly customDomains?: unknown; readonly type?: unknown };
 type FrpcConfig = { readonly proxies?: unknown };
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return Object.prototype.toString.call(value) === "[object Object]"
-    ? (value as Record<string, unknown>)
-    : undefined;
-}
-
-function isString(value: unknown): value is string {
-  return Object.prototype.toString.call(value) === "[object String]";
-}
 
 export async function printConnection(paths: WorkerPaths): Promise<void> {
   const baseUrl = process.env.T3_PUBLIC_URL ?? publicUrlFromFrpc(paths);
