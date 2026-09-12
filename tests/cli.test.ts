@@ -11,10 +11,14 @@ import { join } from "node:path";
 
 import { defaultWorkerHome, parseWorkerCliOptions } from "../src/cli.ts";
 import {
+  FRPC_ARCHIVE_SHA256,
+  FRPC_VERSION,
   installFrpcConfig,
   prepareWorker,
   t3WorktreesRoot,
+  verifyFileSha256,
   workerPaths,
+  workerProcessSpecs,
   writeEcosystem,
 } from "../src/worker.ts";
 
@@ -23,6 +27,19 @@ describe("CLI options", () => {
     expect(
       parseWorkerCliOptions(["start", "--frpc-config", "/tmp/frpc.toml"])
     ).toEqual({ command: "start", frpcConfig: "/tmp/frpc.toml" });
+  });
+
+  test("accepts container lifecycle commands through the published CLI", () => {
+    expect(
+      parseWorkerCliOptions(["run", "--frpc-config", "/etc/frp/frpc.toml"])
+    ).toEqual({ command: "run", frpcConfig: "/etc/frp/frpc.toml" });
+    expect(parseWorkerCliOptions(["connection"])).toEqual({
+      command: "connection",
+    });
+    expect(parseWorkerCliOptions(["health", "--json"])).toEqual({
+      command: "health",
+      json: true,
+    });
   });
 
   test("uses a stable machine-level state directory", () => {
@@ -37,7 +54,55 @@ describe("CLI options", () => {
     );
     expect(() =>
       parseWorkerCliOptions(["status", "--frpc-config", "x"])
-    ).toThrow("--frpc-config requires the start command.");
+    ).toThrow("--frpc-config requires the start or run command.");
+    expect(() => parseWorkerCliOptions(["run", "--json"])).toThrow(
+      "--json requires the health command."
+    );
+  });
+
+  test("uses one process graph for detached and foreground modes", () => {
+    const home = mkdtempSync(join(tmpdir(), "t3-fauxpencode-"));
+    try {
+      const paths = workerPaths(home);
+      const specs = workerProcessSpecs(
+        paths,
+        "/workspace",
+        "/package",
+        paths.frpcConfig,
+        "/workspaces"
+      );
+
+      expect(specs.map((spec) => spec.id)).toEqual(["shim", "t3", "frpc"]);
+      expect(specs[0]?.command).toEqual([
+        process.execPath,
+        "/package/src/server.ts",
+      ]);
+      expect(specs[0]?.env.PI_ALLOWED_ROOTS).toContain("/workspaces");
+      expect(specs[1]?.env.T3_HOME).toBe(paths.t3Home);
+      expect(specs[2]?.command).toEqual([paths.frpc, "-c", paths.frpcConfig]);
+    } finally {
+      rmSync(home, { force: true, recursive: true });
+    }
+  });
+
+  test("pins FRPC archives and rejects a checksum mismatch", () => {
+    const home = mkdtempSync(join(tmpdir(), "t3-fauxpencode-"));
+    try {
+      const archive = join(home, "frpc.tar.gz");
+      writeFileSync(archive, "fixture archive");
+      expect(FRPC_VERSION).toBe("0.71.0");
+      expect(Object.keys(FRPC_ARCHIVE_SHA256).sort()).toEqual([
+        "darwin-amd64",
+        "darwin-arm64",
+        "linux-amd64",
+        "linux-arm64",
+      ]);
+      expect(() => verifyFileSha256(archive, "0".repeat(64))).toThrow(
+        "FRPC archive checksum mismatch"
+      );
+    } finally {
+      rmSync(home, { force: true, recursive: true });
+    }
   });
 
   test("generates one PM2 stack and adds frpc only with a config", () => {

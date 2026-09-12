@@ -37,8 +37,8 @@ test("creates pairing tokens from the persistent worker environment", async () =
     const child = Bun.spawn({
       cmd: [
         process.execPath,
-        "--no-env-file",
-        join(import.meta.dir, "..", "tools", "print-t3-connection.ts"),
+        join(import.meta.dir, "..", "bin", "t3-fauxpencode.mjs"),
+        "connection",
       ],
       cwd: root,
       env: {
