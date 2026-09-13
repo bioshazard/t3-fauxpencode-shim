@@ -3,6 +3,7 @@ set -euo pipefail
 
 repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 t3_home="${T3_HOME:-$repo_dir/artifacts/t3-shim-home}"
+t3_args=(--base-dir "$t3_home" --host 127.0.0.1 --port 3773 --no-browser)
 
 T3_HOME="$t3_home" bun "$repo_dir/tools/write-t3-shim-settings.ts"
 
@@ -16,9 +17,9 @@ if [[ -n "${T3_ROOT:-}" ]]; then
     echo "T3_ROOT must point to a T3 checkout." >&2
     exit 1
   fi
-  exec "${keep_awake[@]}" pnpm --dir "$T3_ROOT" run dev --home-dir "$t3_home"
+  exec "${keep_awake[@]}" pnpm --dir "$T3_ROOT" run dev -- "${t3_args[@]}"
 fi
 
 # 0.0.37 references Ghostty Wasm terminal assets that were omitted from its
 # published package. 0.0.39 ships those assets.
-exec "${keep_awake[@]}" bunx "t3@${T3_VERSION:-0.0.39}" --base-dir "$t3_home"
+exec "${keep_awake[@]}" bunx "t3@${T3_VERSION:-0.0.39}" "${t3_args[@]}"

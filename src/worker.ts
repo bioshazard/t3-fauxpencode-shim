@@ -11,6 +11,8 @@ import {
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 
+import { asRecord } from "./decode.ts";
+
 export const SHIM_PORT = 41874;
 export const T3_PORT = 3773;
 export const FRPC_VERSION = "0.71.0";
@@ -103,15 +105,9 @@ export function installFrpcConfig(
   return paths.frpcConfig;
 }
 
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return Object.prototype.toString.call(value) === "[object Object]"
-    ? (value as Record<string, unknown>)
-    : null;
-}
-
 function isLoopbackT3Proxy(value: unknown): boolean {
   const proxy = asRecord(value);
-  if (proxy === null || proxy.localPort !== T3_PORT) return false;
+  if (proxy === undefined || proxy.localPort !== T3_PORT) return false;
   return proxy.localIP === undefined || proxy.localIP === "127.0.0.1";
 }
 
